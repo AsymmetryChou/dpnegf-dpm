@@ -1064,7 +1064,8 @@ def negf():
         Argument("out_current", bool, optional=True, default=False, doc=doc_out_current),
         Argument("out_current_nscf", bool, optional=True, default=False, doc=doc_out_current_nscf),
         Argument("out_ldos", bool, optional=True, default=False, doc=doc_out_ldos),
-        Argument("out_lcurrent", bool, optional=True, default=False, doc=doc_out_lcurrent)
+        Argument("out_lcurrent", bool, optional=True, default=False, doc=doc_out_lcurrent),
+        Argument("n_cpus", [int, None], optional=True, default=None, doc="Number of CPU cores for parallel self-energy calculation. Default None uses os.cpu_count().")
     ]
 
 def stru_options():

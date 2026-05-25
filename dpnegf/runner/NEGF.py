@@ -53,14 +53,16 @@ class NEGF(object):
                 out_current: bool=False,out_current_nscf: bool=False,out_ldos: bool=False,out_lcurrent: bool=False,
                 results_path: Optional[str]=None,
                 torch_device: Union[str, torch.device]=torch.device('cpu'),
-                AtomicData_options: Optional[dict]=None, 
+                AtomicData_options: Optional[dict]=None,
+                n_cpus: Optional[int]=None,
                 **kwargs):
         
         
-        # self.model = model # No need to set model as property for memory saving      
+        # self.model = model # No need to set model as property for memory saving
         self.results_path = results_path
         self.cdtype = torch.complex128
         self.torch_device = torch_device
+        self.n_cpus = n_cpus
                
         # get the parameters
         self.ele_T = ele_T
@@ -556,11 +558,11 @@ class NEGF(object):
                 #         self.deviceprop.lead_L.self_energy(kpoint=k, energy=e, eta_lead=self.eta_lead, save=True)
                 #         self.deviceprop.lead_R.self_energy(kpoint=k, energy=e, eta_lead=self.eta_lead, save=True)
                 compute_all_self_energy(self.eta_lead, self.deviceprop.lead_L, self.deviceprop.lead_R,
-                                        self.kpoints, self.density.integrate_range, self.self_energy_save_path)
+                                        self.kpoints, self.density.integrate_range, self.self_energy_save_path, n_cpus=self.n_cpus)
             elif not self.scf:
                 # In non-scf case, the self-energy of the leads is calculated for each energy point in the energy grid.
                 compute_all_self_energy(self.eta_lead, self.deviceprop.lead_L, self.deviceprop.lead_R,
-                                        self.kpoints, self.uni_grid, self.self_energy_save_path)
+                                        self.kpoints, self.uni_grid, self.self_energy_save_path, n_cpus=self.n_cpus)
         log.info(msg="-----------------------------------\n")
 
 
