@@ -42,7 +42,7 @@ DPNEGF runs inside the DeePTB virtual environment. We use [UV](https://github.co
 
 - **Step 3: Add DPNEGF to the DeePTB environment**
   ```bash
-  # Clone the DPNEGF repository (you can clone it anywhere)
+  # Clone the DPNEGF repository (you can clone it anywhere but not inside the DeePTB directory for clearity)
   git clone https://github.com/deepmodeling/dpnegf.git
   
   # Still inside the DeePTB directory
