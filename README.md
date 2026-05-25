@@ -13,22 +13,50 @@ For more details, see our papers:
 
 ## Installation
 
-Installing **DPNEGF** is straightforward. We recommend using a virtual environment for dependency management.
+DPNEGF runs inside the DeePTB virtual environment. We use [UV](https://github.com/astral-sh/uv) as the package manager.
 
 - **Requirements**
   - Git
-  - DeePTB(https://github.com/deepmodeling/DeePTB) ≥ 2.1.1
+  - Python 3.9 to 3.12 (UV can auto-install if needed)
+  - [DeePTB](https://github.com/deepmodeling/DeePTB) ≥ 2.1.1
 
-- **From Source**
-    1. Clone the repository:
-        ```bash
-        git clone https://github.com/deepmodeling/dpnegf.git
-        ```
-    2. Navigate to the root directory and install DPNEGF:
-        ```bash
-        cd dpnegf
-        pip install .
-        ```
+- **Step 1: Install UV** (if not already installed)
+  ```bash
+  # On macOS and Linux
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+
+  # Or using pip
+  pip install uv
+
+  # On Windows (PowerShell)
+  powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+  ```
+
+- **Step 2: Install DeePTB**
+  ```bash
+  git clone https://github.com/deepmodeling/DeePTB.git
+  cd DeePTB
+  uv sync  # Creates .venv and installs DeePTB with all dependencies
+  ```
+  For GPU support, see [DeePTB README](https://github.com/deepmodeling/DeePTB#installation).
+
+- **Step 3: Add DPNEGF to the DeePTB environment**
+  ```bash
+  # Still inside the DeePTB directory
+  uv add /path/to/dpnegf
+  ```
+  Replace `/path/to/dpnegf` with the actual path to your cloned DPNEGF repository.
+
+- **Run DPNEGF**
+  ```bash
+  # UV automatically activates the environment
+  uv run dpnegf --help
+
+  # Or activate manually
+  source .venv/bin/activate  # On Unix/macOS
+  .venv\Scripts\activate     # On Windows
+  dpnegf --help
+  ```
 ## Test code 
 
 To ensure the code is correctly installed, please run the unit tests first:
