@@ -15,9 +15,9 @@ on:
 jobs: 
   run-tests:
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'DeePTB-Lab'
+    if: github.repository_owner == 'deepmodeling'
     # 使用由 'Container' 工作流构建的开发镜像
-    container: ghcr.io/deeptb-lab/dpnegf-main:latest
+    container: ghcr.io/deepmodeling/dpnegf-main:latest
     steps: 
       - name: Checkout code
         uses: actions/checkout@v5
