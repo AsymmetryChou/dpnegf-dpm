@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.repository_owner == 'deepmodeling'
     # 使用由 'Container' 工作流构建的开发镜像
-    container: ghcr.io/deepmodeling/dpnegf-main:latest
+    container: ghcr.io/${{ github.repository_owner }}/dpnegf-main:latest
     steps: 
       - name: Checkout code
         uses: actions/checkout@v5

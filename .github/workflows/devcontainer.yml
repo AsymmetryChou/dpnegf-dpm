@@ -10,11 +10,12 @@ on:
       - 'docs/**'
       - 'examples/**'
       - 'README.md'
+  workflow_dispatch:
 
 jobs:
   build_and_push_container:
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'DeePTB-Lab'
+    if: github.repository_owner == 'deepmodeling'
 
     # 允许 GITHUB_TOKEN 有写入软件包（Packages）的权限，这是推送到 ghcr.io 所必需的
     permissions:
