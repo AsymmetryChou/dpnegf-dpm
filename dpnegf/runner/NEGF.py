@@ -138,6 +138,8 @@ class NEGF(object):
         AtomicData_options = self.update_atomicdata_options(model,AtomicData_options)
 
         # computing the hamiltonian
+        profiler = Profiler()
+        profiler.start() 
         self.negf_hamiltonian = NEGFHamiltonianInit(model=model,
                                                     AtomicData_options=AtomicData_options, 
                                                     structure=structure,
@@ -153,6 +155,10 @@ class NEGF(object):
                 self.negf_hamiltonian.initialize(kpoints=self.kpoints,block_tridiagnal=self.block_tridiagonal,\
                                                  useBloch=self.useBloch,bloch_factor=self.bloch_factor,\
                                                  use_saved_HS=self.use_saved_HS, saved_HS_path=self.saved_HS_path)
+        profiler.stop()
+        output_path = os.path.join(self.results_path, "profile_report_ham_init.html")
+        with open(output_path, 'w') as report_file:
+            report_file.write(profiler.output_html())
 
         self.free_charge = {} # net charge: hole - electron
         #  Regions for Poisson equation
@@ -414,7 +420,7 @@ class NEGF(object):
         profiler.start() 
         self.negf_compute(scf_require=False,Vbias=None)
         profiler.stop()
-        output_path = os.path.join(self.results_path, "profile_report.html")
+        output_path = os.path.join(self.results_path, "profile_report_negf.html")
         with open(output_path, 'w') as report_file:
             report_file.write(profiler.output_html())
         
