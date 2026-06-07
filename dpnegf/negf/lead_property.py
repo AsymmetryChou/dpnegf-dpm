@@ -627,8 +627,8 @@ def compute_all_self_energy(eta, lead_L, lead_R, kpoints_grid, energy_grid,
     n_cpus : int or None, optional
         Number of CPU cores to use for memory estimation. If None, uses os.cpu_count().
     se_numba_jit : bool or None, optional
-        Optional numba JIT decorator to accelerate self-energy calculation. If None, JIT will be
-        used if numba is available. Default is None.
+        Boolean flag controlling whether to use the Numba-accelerated surface Green's function core.
+        If None, Numba will be used when available. Default is None.
 
     Returns
     -------
