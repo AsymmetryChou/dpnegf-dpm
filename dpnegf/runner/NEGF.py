@@ -48,7 +48,8 @@ class NEGF(object):
                 sgf_solver: str,
                 e_fermi: float=None,
                 use_saved_HS: bool=False, saved_HS_path: str=None,
-                use_saved_se: bool=False, self_energy_save_path: str=None, se_info_display: bool=False,
+                use_saved_se: bool=False, self_energy_save_path: str=None, 
+                se_info_display: bool=False, se_numba_jit: Optional[bool]=None,
                 out_tc: bool=False,out_dos: bool=False,out_density: bool=False,out_potential: bool=False,
                 out_current: bool=False,out_current_nscf: bool=False,out_ldos: bool=False,out_lcurrent: bool=False,
                 results_path: Optional[str]=None,
@@ -84,6 +85,7 @@ class NEGF(object):
         self.use_saved_se = use_saved_se # whether to use the saved self-energy or not
         self.self_energy_save_path = self_energy_save_path # The directory to save the self-energy or for saved self-energy
         self.se_info_display = se_info_display # whether to display the self-energy information after calculation
+        self.se_numba_jit = se_numba_jit
         self.pbc = self.stru_options["pbc"]
 
         if  self.stru_options["lead_L"]["useBloch"] or self.stru_options["lead_R"]["useBloch"]:
@@ -564,11 +566,13 @@ class NEGF(object):
                 #         self.deviceprop.lead_L.self_energy(kpoint=k, energy=e, eta_lead=self.eta_lead, save=True)
                 #         self.deviceprop.lead_R.self_energy(kpoint=k, energy=e, eta_lead=self.eta_lead, save=True)
                 compute_all_self_energy(self.eta_lead, self.deviceprop.lead_L, self.deviceprop.lead_R,
-                                        self.kpoints, self.density.integrate_range, self.self_energy_save_path, n_cpus=self.n_cpus)
+                                        self.kpoints, self.density.integrate_range, self.self_energy_save_path, 
+                                        n_cpus=self.n_cpus, se_numba_jit=self.se_numba_jit)
             elif not self.scf:
                 # In non-scf case, the self-energy of the leads is calculated for each energy point in the energy grid.
                 compute_all_self_energy(self.eta_lead, self.deviceprop.lead_L, self.deviceprop.lead_R,
-                                        self.kpoints, self.uni_grid, self.self_energy_save_path, n_cpus=self.n_cpus)
+                                        self.kpoints, self.uni_grid, self.self_energy_save_path, 
+                                        n_cpus=self.n_cpus, se_numba_jit=self.se_numba_jit)
         log.info(msg="-----------------------------------\n")
 
 
