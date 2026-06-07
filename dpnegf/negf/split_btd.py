@@ -8,6 +8,8 @@ from itertools import product
 import math
 import scipy
 
+from numba import njit
+
 
 def accum(accmap, input, func=None, size=None, fill_value=0, dtype=None):
     """An accumulation function similar to Matlab's `accumarray` function.
@@ -78,6 +80,161 @@ def accum(accmap, input, func=None, size=None, fill_value=0, dtype=None):
             out[s] = func(vals[s])
 
     return out
+
+
+@njit(cache=True)
+def _compute_blocks_into(left_block, right_block, edge, edge1, out, write):
+    """Iterative core of `compute_blocks`, JIT-compiled.
+
+    Writes the block sequence into `out[write:]` and returns the new write
+    cursor. The original recursion peels one block off each end per level and
+    narrows the working edges; this version walks the same recurrence with
+    explicit `lo`/`hi` indices instead of slicing.
+
+    Note: the legacy code slices `edge[L:-R]` but `edge1[R:-L]` — the offsets
+    are swapped — so we track the cumulative-L peel (`lo_e`) and cumulative-R
+    peel (`lo_e1`) separately. `size = N - lo_e - lo_e1` is consistent for
+    both.
+    """
+    if left_block < 1:
+        left_block = 1
+    if right_block < 1:
+        right_block = 1
+
+    N = edge.shape[0]
+    lo_e = 0      # cumulative left-side peel — indexes into `edge`
+    lo_e1 = 0     # cumulative right-side peel — indexes into `edge1`
+    front = write
+    back = out.shape[0]
+
+    while True:
+        size = N - lo_e - lo_e1
+        if left_block + right_block < size:
+            new_left_block = edge[lo_e + left_block - 1] - left_block - lo_e
+            new_right_block = edge1[lo_e1 + right_block - 1] - right_block - lo_e1
+
+            cond_a = left_block + new_left_block <= size - right_block
+            cond_b = size - right_block - new_right_block >= left_block
+
+            if cond_a and cond_b:
+                out[front] = left_block
+                front += 1
+                back -= 1
+                out[back] = right_block
+                lo_e += left_block
+                lo_e1 += right_block
+                if new_left_block < 1:
+                    left_block = 1
+                else:
+                    left_block = new_left_block
+                if new_right_block < 1:
+                    right_block = 1
+                else:
+                    right_block = new_right_block
+                continue
+
+            if new_left_block > new_right_block:
+                out[front] = left_block
+                out[front + 1] = size - left_block
+                front += 2
+            else:
+                out[front] = size - right_block
+                out[front + 1] = right_block
+                front += 2
+        elif left_block + right_block == size:
+            out[front] = left_block
+            out[front + 1] = right_block
+            front += 2
+        else:
+            out[front] = size
+            front += 1
+
+        # The back tail at out[back:end] is already in the right order
+        # (innermost first, outermost last) because we wrote at out[--back]
+        # in outer-to-inner peel order. Copy forward.
+        n_back = out.shape[0] - back
+        for i in range(n_back):
+            out[front + i] = out[back + i]
+        return front + n_back
+
+
+@njit(cache=True)
+def _find_optimal_cut_core(edge, edge1, left, right):
+    """JIT core for `find_optimal_cut`: sweeps candidate split points, runs
+    `_compute_blocks_into` for each, picks the cube-sum-minimizing split.
+
+    Returns (best_blocks, n_blocks, best_sep, right_block, left_block,
+    found). `found` is 0 when the candidate set is empty (legacy caller maps
+    that to sep=NaN).
+    """
+    size = edge.shape[0]
+    n_candidates = size - right + 1 - left
+    if n_candidates <= 0:
+        return np.empty(0, dtype=np.int64), 0, 0, 0, 0, 0
+
+    arange_n = np.arange(size, dtype=np.int64)
+    edge_m_idx = edge - arange_n
+    edge1_m_idx = edge1 - arange_n
+
+    # An upper bound on the block-list length for the join of `block1` and
+    # reversed `block2`. Each call returns at most `size + 2` entries; two
+    # of them give a comfortable upper bound.
+    buf_cap = 2 * (size + 4)
+    buf1 = np.empty(buf_cap, dtype=np.int64)
+    buf2 = np.empty(buf_cap, dtype=np.int64)
+    best_buf = np.empty(buf_cap, dtype=np.int64)
+
+    best_metric = np.int64(-1)
+    best_sep = np.int64(0)
+    best_right_block = np.int64(0)
+    best_left_block = np.int64(0)
+    best_n = np.int64(0)
+
+    for item1 in range(left, size - right + 1):
+        item2 = size - item1
+
+        # Reconstruct edge_2 = (edge1 - arange_n)[item2:] + arange(item1).
+        edge_2 = np.empty(item1, dtype=np.int64)
+        for k in range(item1):
+            edge_2[k] = edge1_m_idx[item2 + k] + k
+        edge_4 = np.empty(item2, dtype=np.int64)
+        for k in range(item2):
+            edge_4[k] = edge_m_idx[item1 + k] + k
+
+        # block1 = compute_blocks(left, edge1_m_idx[item2], edge[:item1], edge_2)
+        n1 = _compute_blocks_into(left, edge1_m_idx[item2], edge[:item1], edge_2, buf1, 0)
+        # block2 = compute_blocks(right, edge_m_idx[item1], edge1[:item2], edge_4)
+        n2 = _compute_blocks_into(right, edge_m_idx[item1], edge1[:item2], edge_4, buf2, 0)
+
+        # metric = sum( (block1 + reversed(block2))^3 )
+        metric = np.int64(0)
+        for k in range(n1):
+            v = buf1[k]
+            metric += v * v * v
+        for k in range(n2):
+            v = buf2[k]
+            metric += v * v * v
+
+        if best_metric < 0 or metric < best_metric:
+            best_metric = metric
+            best_sep = item1
+            best_right_block = buf1[n1 - 1]
+            best_left_block = buf2[n2 - 1]
+            # Stash block1 + reversed(block2) into best_buf.
+            for k in range(n1):
+                best_buf[k] = buf1[k]
+            for k in range(n2):
+                best_buf[n1 + k] = buf2[n2 - 1 - k]
+            best_n = n1 + n2
+
+    # Filter zeros — legacy `[item for item in blocks if item != 0]`.
+    out = np.empty(best_n, dtype=np.int64)
+    w = 0
+    for k in range(best_n):
+        if best_buf[k] != 0:
+            out[w] = best_buf[k]
+            w += 1
+    return out[:w], w, best_sep, best_right_block, best_left_block, 1
 
 
 def cut_in_blocks(h_0, blocks):
@@ -167,51 +324,14 @@ def find_optimal_cut(edge, edge1, left, right):
 
     """
 
-    unique_indices = np.arange(left, len(edge) - right + 1)
-    blocks = []
-    seps = []
-    sizes = []
-    metric = []
-    size = len(edge)
-
-    for j1, item1 in enumerate(unique_indices):
-        seps.append(item1)
-        item2 = size - item1
-
-        # print(item1, item2)
-        # print(item1)
-
-        edge_1 = edge[:item1]
-        edge_2 = (edge1 - np.arange(len(edge1)))[item2:] + np.arange(item1)
-
-        edge_3 = edge1[:item2]
-        edge_4 = (edge - np.arange(len(edge)))[item1:] + np.arange(item2)
-
-        block1 = compute_blocks(left, (edge1 - np.arange(len(edge)))[item2],
-                                edge_1, edge_2)
-
-        block2 = compute_blocks(right, (edge - np.arange(len(edge1)))[item1],
-                                edge_3, edge_4)
-
-        block = block1 + block2[::-1]
-        blocks.append(block)
-        metric.append(np.sum(np.array(block) ** 3))
-        sizes.append((block1[-1], block2[-1]))
-
-    if len(metric) == 0:
+    edge_arr = np.ascontiguousarray(edge, dtype=np.int64)
+    edge1_arr = np.ascontiguousarray(edge1, dtype=np.int64)
+    out, _, sep, right_block, left_block, found = _find_optimal_cut_core(
+        edge_arr, edge1_arr, int(left), int(right)
+    )
+    if not found:
         return [left, right], np.nan, 0, 0
-    else:
-
-        best = np.argmin(np.array(metric))
-
-        blocks = blocks[best]
-        blocks = [item for item in blocks if item != 0]
-
-        sep = seps[best]
-
-        right_block, left_block = sizes[best]
-
-        return blocks, sep, right_block, left_block
+    return out.tolist(), int(sep), int(right_block), int(left_block)
 
 
 def compute_blocks_optimized(edge, edge1, left=1, right=1):
@@ -591,38 +711,19 @@ def compute_blocks(left_block, right_block, edge, edge1):
     [2, 2]
     """
 
-    size = len(edge)
     left_block = max(1, left_block)
     right_block = max(1, right_block)
 
-    if left_block + right_block < size:  # if blocks do not overlap
+    edge_arr = np.ascontiguousarray(edge, dtype=np.int64)
+    edge1_arr = np.ascontiguousarray(edge1, dtype=np.int64)
 
-        new_left_block = edge[left_block - 1] - left_block
-        new_right_block = edge1[right_block - 1] - right_block
-        #
-        # new_right_block = np.max(np.argwhere(np.abs(edge - (size - right_block)) -
-        #                                      np.min(np.abs(edge - (size - right_block))) == 0)) + 1
-        # new_right_block = size - new_right_block - right_block
-
-        if left_block + new_left_block <= size - right_block and \
-                size - right_block - new_right_block >= left_block:  # spacing between blocks is sufficient
-
-            blocks = compute_blocks(new_left_block,
-                                    new_right_block,
-                                    edge[left_block:-right_block] - left_block,
-                                    edge1[right_block:-left_block] - right_block)
-
-            return [left_block] + blocks + [right_block]
-        else:
-            if new_left_block > new_right_block:
-                return [left_block] + [size - left_block]
-            else:
-                return [size - right_block] + [right_block]
-
-    elif left_block + right_block == size:  # sum of blocks equal to the matrix size
-        return [left_block] + [right_block]
-    else:  # blocks overlap
-        return [size]
+    # Upper bound on the block-list length: each peel writes 2 entries and
+    # the terminating step writes at most 2 more. Allocate `size + 2` and
+    # let the JIT core return the actual length.
+    size = edge_arr.shape[0]
+    out = np.empty(size + 2, dtype=np.int64)
+    n = _compute_blocks_into(left_block, right_block, edge_arr, edge1_arr, out, 0)
+    return out[:n].tolist()
 
 
 def show_blocks(subblocks, input_mat, results_path):
