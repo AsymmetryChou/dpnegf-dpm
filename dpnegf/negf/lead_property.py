@@ -154,7 +154,8 @@ class LeadProperty(object):
                                         energy,
                                         eta_lead=eta_lead, 
                                         method=method,
-                                        HS_inmem=HS_inmem)
+                                        HS_inmem=HS_inmem,
+                                        se_numba_jit=None)
 
     def _get_save_path(self, kpoint, energy, save_format: str, save_path: str = None):
         """
@@ -267,6 +268,7 @@ class LeadProperty(object):
                         energy, 
                         eta_lead: float=1e-5,
                         method: str="Lopez-Sancho",
+                        se_numba_jit=None,
                         HS_inmem: bool=True):
         """
         Calculates the self-energy for a lead in a quantum transport calculation.
@@ -319,7 +321,8 @@ class LeadProperty(object):
                 sDL=SDL_reduced,             #TODO: check chemiPot settiing is correct or not
                 E_ref=self.E_ref,
                 etaLead=eta_lead, 
-                method=method
+                method=method,
+                numba_jit=se_numba_jit
             )
 
             # torch.save(self.se, os.path.join(self.results_path, f"se_nobloch_k{kpoint[0]}_{kpoint[1]}_{kpoint[2]}_{energy}.pth"))
@@ -348,7 +351,8 @@ class LeadProperty(object):
                     sLL=self.SLLk,            #TODO: check chemiPot settiing is correct or not
                     E_ref=self.E_ref,  # temmporarily change to self.efermi for the case in which applying lead bias to corresponding to Nanotcad
                     etaLead=eta_lead, 
-                    method=method
+                    method=method,
+                    numba_jit=se_numba_jit
                 )
                 phase_factor_m = torch.zeros([m_size,m_size],dtype=torch.complex128)
                 for i in range(m_size):
@@ -593,7 +597,8 @@ def _get_safe_n_jobs(lead_L, lead_R, requested_n_jobs=-1, max_memory_fraction=0.
 
 
 def compute_all_self_energy(eta, lead_L, lead_R, kpoints_grid, energy_grid,
-                            self_energy_save_path=None, n_jobs=-1, batch_size=200, n_cpus=None):
+                            self_energy_save_path=None, n_jobs=-1, batch_size=200, 
+                            n_cpus=None, se_numba_jit=None):
     """
     Computes and saves self-energy matrices for all combinations of k-points and energy values
     for left and right leads.
@@ -619,6 +624,11 @@ def compute_all_self_energy(eta, lead_L, lead_R, kpoints_grid, energy_grid,
         Number of parallel jobs to use. Default is -1 (use all available CPUs).
     batch_size : int, optional
         Number of (k, e) tasks per parallel batch. Default is 200.
+    n_cpus : int or None, optional
+        Number of CPU cores to use for memory estimation. If None, uses os.cpu_count().
+    se_numba_jit : bool or None, optional
+        Optional numba JIT decorator to accelerate self-energy calculation. If None, JIT will be
+        used if numba is available. Default is None.
 
     Returns
     -------
@@ -652,14 +662,16 @@ def compute_all_self_energy(eta, lead_L, lead_R, kpoints_grid, energy_grid,
     parent_log_level = logging.getLogger().getEffectiveLevel()
     if len(total_tasks) <= batch_size:
         Parallel(n_jobs=safe_n_jobs, backend="loky")(
-            delayed(_self_energy_worker_blas1)(k, e, eta, leadL_pack, leadR_pack, self_energy_save_path, parent_log_level)
+            delayed(_self_energy_worker_blas1)(k, e, eta, leadL_pack, leadR_pack, 
+                                               self_energy_save_path, se_numba_jit, parent_log_level)
             for k, e in total_tasks
         )
     else:
         for i in range(0, len(total_tasks), batch_size):
             batch = total_tasks[i:i+batch_size]
             Parallel(n_jobs=safe_n_jobs, backend="loky")(
-                delayed(_self_energy_worker_blas1)(k, e, eta, leadL_pack, leadR_pack, self_energy_save_path, parent_log_level)
+                delayed(_self_energy_worker_blas1)(k, e, eta, leadL_pack, leadR_pack, 
+                                                   self_energy_save_path, se_numba_jit, parent_log_level)
                 for k, e in batch
             )
 
@@ -746,7 +758,7 @@ def _precompute_lead_kdata(lead, kpoints_grid):
     return pack
 
 
-def _compute_self_energy_from_pack(pack, k, e, eta_lead, method="Lopez-Sancho"):
+def _compute_self_energy_from_pack(pack, k, e, eta_lead, method="Lopez-Sancho", se_numba_jit=None):
     """Pure-function port of LeadProperty.self_energy_cal that operates on
     the dict produced by _precompute_lead_kdata. Mirrors the math in
     lead_property.py self_energy_cal (non-Bloch and Bloch branches)."""
@@ -774,6 +786,7 @@ def _compute_self_energy_from_pack(pack, k, e, eta_lead, method="Lopez-Sancho"):
             E_ref=E_ref,
             etaLead=eta_lead,
             method=method,
+            numba_jit=se_numba_jit
         )
         return se
 
@@ -794,6 +807,7 @@ def _compute_self_energy_from_pack(pack, k, e, eta_lead, method="Lopez-Sancho"):
             E_ref=E_ref,
             etaLead=eta_lead,
             method=method,
+            numba_jit=se_numba_jit
         )
         phase_factor_m = torch.zeros([m_size, m_size], dtype=torch.complex128)
         bloch_R_list = pack["bloch_R_list"]
@@ -848,20 +862,20 @@ def _init_worker_logging(level):
     root_log.addHandler(ch)
 
 
-def _self_energy_worker_pure(k, e, eta, leadL_pack, leadR_pack, self_energy_save_path, log_level):
+def _self_energy_worker_pure(k, e, eta, leadL_pack, leadR_pack, self_energy_save_path, se_numba_jit, log_level):
     """joblib worker replacement that takes only pickleable packs."""
     _init_worker_logging(log_level)
     save_tmp_L = os.path.join(self_energy_save_path, f"tmp_leadL_k{k[0]}_{k[1]}_{k[2]}_E{e:.8f}.h5")
     save_tmp_R = os.path.join(self_energy_save_path, f"tmp_leadR_k{k[0]}_{k[1]}_{k[2]}_E{e:.8f}.h5")
 
-    seL = _compute_self_energy_from_pack(leadL_pack, k, e, eta)
-    seR = _compute_self_energy_from_pack(leadR_pack, k, e, eta)
+    seL = _compute_self_energy_from_pack(leadL_pack, k, e, eta, se_numba_jit=se_numba_jit)
+    seR = _compute_self_energy_from_pack(leadR_pack, k, e, eta, se_numba_jit=se_numba_jit)
 
     write_to_hdf5(save_tmp_L, k, e, seL)
     write_to_hdf5(save_tmp_R, k, e, seR)
 
 
-def _self_energy_worker_blas1(k, e, eta, leadL_pack, leadR_pack, self_energy_save_path, log_level):
+def _self_energy_worker_blas1(k, e, eta, leadL_pack, leadR_pack, self_energy_save_path, se_numba_jit, log_level):
     """Loky entry point that pins this worker's BLAS/LAPACK runtime to a
     single thread, then delegates to `_self_energy_worker_pure`.
 
@@ -875,11 +889,11 @@ def _self_energy_worker_blas1(k, e, eta, leadL_pack, leadR_pack, self_energy_sav
     with threadpool_limits(limits=1, user_api='blas'):
         return _self_energy_worker_pure(
             k, e, eta, leadL_pack, leadR_pack,
-            self_energy_save_path, log_level,
+            self_energy_save_path, se_numba_jit, log_level,
         )
 
 
-def self_energy_worker(k, e, eta, lead_L, lead_R, self_energy_save_path):
+def self_energy_worker(k, e, eta, lead_L, lead_R, self_energy_save_path, se_numba_jit=None):
     """
     Calculates the self-energy for left and right leads at a given k-point and energy,
     and saves the results to HDF5 files.
@@ -908,8 +922,8 @@ def self_energy_worker(k, e, eta, lead_L, lead_R, self_energy_save_path):
     save_tmp_L = os.path.join(self_energy_save_path, f"tmp_leadL_k{k[0]}_{k[1]}_{k[2]}_E{e:.8f}.h5")
     save_tmp_R = os.path.join(self_energy_save_path, f"tmp_leadR_k{k[0]}_{k[1]}_{k[2]}_E{e:.8f}.h5")
 
-    seL = lead_L.self_energy_cal(kpoint=k, energy=e, eta_lead=eta)
-    seR = lead_R.self_energy_cal(kpoint=k, energy=e, eta_lead=eta)
+    seL = lead_L.self_energy_cal(kpoint=k, energy=e, eta_lead=eta, se_numba_jit=se_numba_jit)
+    seR = lead_R.self_energy_cal(kpoint=k, energy=e, eta_lead=eta, se_numba_jit=se_numba_jit)
 
     write_to_hdf5(save_tmp_L, k, e, seL)
     write_to_hdf5(save_tmp_R, k, e, seR)
