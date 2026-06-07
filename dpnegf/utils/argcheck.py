@@ -1050,6 +1050,7 @@ def negf():
         Argument("use_saved_se", bool, optional=True, default=False, doc="whether to use saved self energy"),
         Argument("self_energy_save_path", str, optional=True, default=None, doc="the directory to save the self energy or load the self energy"),
         Argument("se_info_display", bool, optional=True, default=False, doc="whether to display the self energy information"),
+        Argument("se_numba_jit", [bool, None], optional=True, default=None, doc="whether to use numba JIT for self energy calculation"),
         Argument("espacing", [int, float], optional=False, doc=doc_espacing),
         Argument("emin", [int, float], optional=False, doc=doc_emin),
         Argument("emax", [int, float], optional=False, doc=doc_emax),

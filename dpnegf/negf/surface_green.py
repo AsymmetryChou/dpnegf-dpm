@@ -7,7 +7,7 @@ from numba import njit, float64, complex128, int64
 log = logging.getLogger(__name__)
 
 def selfEnergy(hL, hLL, sL, sLL, ee, hDL=None, sDL=None, etaLead=1e-8, Bulk=False, 
-                    E_ref=0.0, dtype=np.complex128, device='cpu', method='Lopez-Sancho'):
+                    E_ref=0.0, dtype=np.complex128, device='cpu', method='Lopez-Sancho', numba_jit=None):
     '''calculates the self-energy and surface Green's function for a given  Hamiltonian and overlap matrix.
     
     Parameters
@@ -40,6 +40,8 @@ def selfEnergy(hL, hLL, sL, sLL, ee, hDL=None, sDL=None, etaLead=1e-8, Bulk=Fals
     method
         specify the method for calculating the surface Green's function.The available options 
         are "Lopez-Sancho" and any other value will default to "Lopez-Sancho".
+    numba_jit
+        A boolean flag that indicates whether to use Numba's Just-In-Time (JIT) compilation for the surface Green's function calculation. 
     
     Returns
     -------
@@ -69,7 +71,8 @@ def selfEnergy(hL, hLL, sL, sLL, ee, hDL=None, sDL=None, etaLead=1e-8, Bulk=Fals
     
     if hDL is None:
         ESH = (eeshifted * sL - hL)
-        SGF = surface_green(hL, hLL, sL, sLL, eeshifted + 1j * etaLead , method)
+        SGF = surface_green(hL, hLL, sL, sLL, eeshifted + 1j * etaLead , method,
+                            numba_jit=numba_jit)
         
         if Bulk:
             Sig = np.linalg.inv(SGF)
@@ -77,7 +80,8 @@ def selfEnergy(hL, hLL, sL, sLL, ee, hDL=None, sDL=None, etaLead=1e-8, Bulk=Fals
             Sig = ESH - np.linalg.inv(SGF)
     else:
         a, b = hDL.shape
-        SGF = surface_green(hL, hLL, sL, sLL, eeshifted + 1j * etaLead , method)
+        SGF = surface_green(hL, hLL, sL, sLL, eeshifted + 1j * etaLead , method,
+                            numba_jit=numba_jit)
         
         Sig = (eeshifted*sDL-hDL) @ SGF[:b,:b] @ (eeshifted*sDL.conj().T-hDL.conj().T)
     
@@ -98,34 +102,46 @@ try:
     @njit(NumbaReturnType(complex128[:,:], complex128[:,:], complex128[:,:], complex128[:,:], complex128))
     def _surface_green_numba_core(H, h01, S, s01, ee):
 
+        N = H.shape[0]
         h10 = np.conj(h01.T)
         s10 = np.conj(s01.T)
-        alpha, beta = h10 - ee * s10, h01 - ee * s01
+        alpha = h10 - ee * s10
+        beta = h01 - ee * s01
         eps = H.copy()
         epss = H.copy()
-        
+
+        eS = ee * S  # loop invariant
+
+        # preallocated scratch buffer reused every iteration
+        RHS = np.empty((N, 2 * N), dtype=np.complex128)
+
         converged = False
         iteration = 0
-        oldeps, oldepss = np.empty_like(eps), np.empty_like(epss)
-        oldalpha, oldbeta = np.empty_like(alpha), np.empty_like(beta)
         while not converged:
             iteration += 1
-            oldeps[:], oldepss[:] = eps, epss
-            oldalpha[:], oldbeta[:] = alpha, beta
-            tmpa = np.linalg.solve(ee * S - oldeps, oldalpha)
-            tmpb = np.linalg.solve(ee * S - oldeps, oldbeta)
-            
-            alpha = oldalpha @ tmpa
-            beta = oldbeta @ tmpb
-            eps = oldeps + oldalpha @ tmpb + oldbeta @ tmpa
-            epss = oldepss + oldbeta @ tmpa
+            # one LU solve with stacked RHS = [alpha | beta]
+            RHS[:, :N] = alpha
+            RHS[:, N:] = beta
+            sol = np.linalg.solve(eS - eps, RHS)
+            tmpa = np.ascontiguousarray(sol[:, :N])
+            tmpb = np.ascontiguousarray(sol[:, N:])
+
+            # update eps/epss in place while alpha/beta still hold previous values;
+            # beta @ tmpa is reused in both updates, so compute once.
+            beta_tmpa = beta @ tmpa
+            eps += alpha @ tmpb
+            eps += beta_tmpa
+            epss += beta_tmpa
+
+            alpha = alpha @ tmpa
+            beta = beta @ tmpb
+
             LopezConvTest = np.max(np.abs(alpha) + np.abs(beta))
 
             if LopezConvTest < 1.0e-40:
-                # np.linalg.inv() 等价于 PyTorch 的 .inverse()
-                gs = np.linalg.inv(ee * S - epss)
-                
-                test = ee * S - H - (ee * s01 - h01) @ gs @ (ee * s10 - h10)
+                gs = np.linalg.inv(eS - epss)
+
+                test = eS - H - (ee * s01 - h01) @ gs @ (ee * s10 - h10)
                 myConvTest = np.max(np.abs((test @ gs) - np.eye(H.shape[0], dtype=h01.dtype)))
 
                 if myConvTest < 3.0e-5:
@@ -136,10 +152,10 @@ try:
                         return gs, 0, 0, 0
                 else:
                     raise ArithmeticError
-        
+
             if iteration >= 101:
                 raise RuntimeError
-                
+
         return gs
 
     _numba_available = True
@@ -151,35 +167,50 @@ except (ImportError, Exception) as e:
 
 # Scipy-based implementation of the surface Green's function calculation
 def _surface_green_scipy_core(H, h01, S, s01, ee):
+    N = H.shape[0]
     h10 = np.conj(h01.T)
     s10 = np.conj(s01.T)
-    alpha, beta = h10 - ee * s10, h01 - ee * s01
-    
-    eps, epss = H.copy(), H.copy()
-    
+    alpha = h10 - ee * s10
+    beta = h01 - ee * s01
+
+    eps = H.copy()
+    epss = H.copy()
+
+    eS = ee * S  # loop invariant
+
+    # preallocated scratch buffer reused every iteration
+    RHS = np.empty((N, 2 * N), dtype=np.complex128)
+
     converged = False
     iteration = 0
-    oldeps, oldepss = np.empty_like(eps), np.empty_like(epss)
-    oldalpha, oldbeta = np.empty_like(alpha), np.empty_like(beta)
     while not converged:
         iteration += 1
-        oldeps[:], oldepss[:] = eps, epss
-        oldalpha[:], oldbeta[:] = alpha, beta
-        tmpa = SLA.solve(ee * S - oldeps, oldalpha)
-        tmpb = SLA.solve(ee * S - oldeps, oldbeta)
-        
-        alpha = oldalpha @ tmpa
-        beta = oldbeta @ tmpb
-        eps = oldeps + oldalpha @ tmpb + oldbeta @ tmpa
-        epss = oldepss + oldbeta @ tmpa
+        # one LU solve with stacked RHS = [alpha | beta]
+        RHS[:, :N] = alpha
+        RHS[:, N:] = beta
+        sol = SLA.solve(eS - eps, RHS,
+                        overwrite_a=True, overwrite_b=True, check_finite=False)
+        tmpa = np.ascontiguousarray(sol[:, :N])
+        tmpb = np.ascontiguousarray(sol[:, N:])
+
+        # update eps/epss in place while alpha/beta still hold previous values;
+        # beta @ tmpa is reused in both updates, so compute once.
+        beta_tmpa = beta @ tmpa
+        eps += alpha @ tmpb
+        eps += beta_tmpa
+        epss += beta_tmpa
+
+        alpha = alpha @ tmpa
+        beta = beta @ tmpb
+
         LopezConvTest = np.max(np.abs(alpha) + np.abs(beta))
 
         if LopezConvTest < 1.0e-40:
-            gs = np.linalg.inv(ee * S - epss)
-            
-            test = ee * S - H - (ee * s01 - h01) @ gs @ (ee * s10 - h10)
-            myConvTest = np.max(np.abs((test @ gs) - np.eye(H.shape[0], dtype=h01.dtype)))
-            
+            gs = np.linalg.inv(eS - epss)
+
+            test = eS - H - (ee * s01 - h01) @ gs @ (ee * s10 - h10)
+            myConvTest = np.max(np.abs((test @ gs) - np.eye(N, dtype=h01.dtype)))
+
             if myConvTest < 3.0e-5:
                 converged = True
                 if myConvTest > 1.0e-8:
@@ -187,22 +218,26 @@ def _surface_green_scipy_core(H, h01, S, s01, ee):
             else:
                 log.error(f"Lopez-Sancho {myConvTest:.8f} Error: gs iteration {iteration}")
                 raise ArithmeticError("Criteria not met. Please check output...")
-        
+
         if iteration >= 101:
             log.error("Lopez-scheme not converged after 100 iteration.")
             raise RuntimeError("Lopez-scheme not converged.")
-            
+
     return gs
 
 
-def surface_green(H, h01, S, s01, ee, 
+def surface_green(H, h01, S, s01, ee,
                   method='Lopez-Sancho',
-                  numba_jit=False):
+                  numba_jit=None):
     '''calculate surface green function
     At this stage, we realized Lopez-Sancho scheme and  GEP scheme.
     However, GEP scheme is not so stable, and we strongly recommended  to implement the Lopez-Sancho scheme.
 
     '''
+
+    # default: use numba whenever it compiled successfully
+    if numba_jit is None:
+        numba_jit = _numba_available
 
     if method == 'GEP':
         gs = calcg0(ee, H, S, h01, s01)
@@ -229,15 +264,18 @@ def surface_green(H, h01, S, s01, ee,
                 assert np.iscomplexobj(h01), "h01 must be a complex array."
                 assert np.iscomplexobj(S), "S must be a complex array."
                 assert np.iscomplexobj(s01), "s01 must be a complex array."
-                assert isinstance(ee, complex), "ee must be a complex scalar."
+                # normalize ee to numpy complex128 to match the @njit signature
+                ee = np.complex128(ee)
+                log.debug("surface_green: using numba core")
                 gs, conv_flag, conv_test, e_real = _surface_green_numba_core(H, h01, S, s01, ee)
                 if conv_flag == 1:
                     log.warning(f"Lopez-Sancho scheme not-so-well converged at E = {e_real:.4f} eV: {conv_test}")
                 return gs
-            except (RuntimeError, ArithmeticError) as e:
+            except Exception as e:
                 log.error(f"Numba JIT function failed at runtime. Falling back to NumPy. Error: {e}")
                 return _surface_green_scipy_core(H, h01, S, s01, ee)
         else:
+            log.debug("surface_green: using scipy core")
             return _surface_green_scipy_core(H, h01, S, s01, ee)
                 
 
