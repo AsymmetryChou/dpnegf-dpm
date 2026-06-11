@@ -1,7 +1,9 @@
 import torch.linalg as tLA
 import torch
 
-def recursive_gf_cal(energy, mat_l_list, mat_d_list, mat_u_list, sd, su, sl, s_in=0, s_out=0, eta=1e-5):
+def recursive_gf_cal(energy, mat_l_list, mat_d_list, mat_u_list, 
+                     sd, su, sl, s_in=0, s_out=0, eta=1e-5,
+                     need_lesser=False, need_greater=False, need_gr_lc=False):
     """The recursive Green's function algorithm is taken from
     M. P. Anantram, M. S. Lundstrom and D. E. Nikonov, Proceedings of the IEEE, 96, 1511 - 1550 (2008)
     DOI: 10.1109/JPROC.2008.927355
@@ -9,56 +11,74 @@ def recursive_gf_cal(energy, mat_l_list, mat_d_list, mat_u_list, sd, su, sl, s_i
     In order to get the electron correlation function output, the parameters s_in has to be set.
     For the hole correlation function, the parameter s_out has to be set.
 
+    By default, the function would return the retarded Green's function blocks.
+
     Parameters
     ----------
-    energy : numpy.ndarray (dtype=numpy.float)
+    energy : torch.Tensor (dtype=torch.float)
         Energy array
-    mat_d_list : list of numpy.ndarray (dtype=numpy.float)
+    mat_d_list : list of torch.Tensor (dtype=torch.float)
         List of diagonal blocks
-    mat_u_list : list of numpy.ndarray (dtype=numpy.float)
+    mat_u_list : list of torch.Tensor (dtype=torch.float)
         List of upper-diagonal blocks
-    mat_l_list : list of numpy.ndarray (dtype=numpy.float)
+    mat_l_list : list of torch.Tensor (dtype=torch.float)
         List of lower-diagonal blocks
     s_in :
          (Default value = 0)
     s_out :
          (Default value = 0)
-    damp :
+    eta :
          (Default value = 0.000001j)
-
+    need_lesser : bool, optional
+        Whether to calculate the lesser Green's function, by default False. 
+        Lesser Green's function is used for electron density and current density calculation.
+    need_greater : bool, optional
+        Whether to calculate the greater Green's function, by default False.
+        Greater Green's function is used for hole density and phase-breaking scattering case.
+    need_gr_lc : bool, optional
+        Whether to calculate the last column blocks of the retarded Green's function responsible for transmission, by default True
+        gr_lc is used for lead spectral function A_L/ A_R = G^r * Gamma_L/R * G^a calculation.
+        Although set need_gr_lc to True would not increase the computational cost of the recursive Green's function algorithm, it would increase the memory cost.
+        If the memory cost is a concern, it is recommended to set need_gr_lc to False.
     Returns
     -------
-    g_trans : numpy.ndarray (dtype=numpy.complex)
-        Blocks of the retarded Green's function responsible for transmission
-    grd : numpy.ndarray (dtype=numpy.complex)
+    g_trans : torch.Tensor (dtype=torch.complex)
+        [0, N-1] block of the retarded Green's function responsible for transmission
+    gr_lc: torch.Tensor (dtype=torch.complex)
+        Last column [:, N-1] blocks of the retarded Green's function responsible for transmission
+    grd : torch.Tensor (dtype=torch.complex)
         Diagonal blocks of the retarded Green's function
-    grl : numpy.ndarray (dtype=numpy.complex)
+    grl : torch.Tensor (dtype=torch.complex)
         Lower diagonal blocks of the retarded Green's function
-    gru : numpy.ndarray (dtype=numpy.complex)
+    gru : torch.Tensor (dtype=torch.complex)
         Upper diagonal blocks of the retarded Green's function
-    gr_left : numpy.ndarray (dtype=numpy.complex)
-        Left-conencted blocks of the retarded Green's function
-    gnd : numpy.ndarray (dtype=numpy.complex)
-        Diagonal blocks of the retarded Green's function
-    gnl : numpy.ndarray (dtype=numpy.complex)
-        Lower diagonal blocks of the retarded Green's function
-    gnu : numpy.ndarray (dtype=numpy.complex)
-        Upper diagonal blocks of the retarded Green's function
-    gin_left : numpy.ndarray (dtype=numpy.complex)
-        Left-conencted blocks of the retarded Green's function
-    gpd : numpy.ndarray (dtype=numpy.complex)
-        Diagonal blocks of the retarded Green's function
-    gpl : numpy.ndarray (dtype=numpy.complex)
-        Lower diagonal blocks of the retarded Green's function
-    gpu : numpy.ndarray (dtype=numpy.complex)
-        Upper diagonal blocks of the retarded Green's function
-    gip_left : numpy.ndarray (dtype=numpy.complex)
-        Left-conencted blocks of the retarded Green's function
+    gr_left : torch.Tensor (dtype=torch.complex)
+        Diagonal blocks of the Left-conencted retarded Green's function
+    gnd : torch.Tensor (dtype=torch.complex)
+        Diagonal blocks of the lesser Green's function
+    gnl : torch.Tensor (dtype=torch.complex)
+        Lower diagonal blocks of the lesser Green's function
+    gnu : torch.Tensor (dtype=torch.complex)
+        Upper diagonal blocks of the lesser Green's function
+    gin_left : torch.Tensor (dtype=torch.complex)
+        Diagonal blocks of the Left-conencted lesser Green's function
+    gpd : torch.Tensor (dtype=torch.complex)
+        Diagonal blocks of the greater Green's function
+    gpl : torch.Tensor (dtype=torch.complex)
+        Lower diagonal blocks of the greater Green's function
+    gpu : torch.Tensor (dtype=torch.complex)
+        Upper diagonal blocks of the greater Green's function
+    gip_left : torch.Tensor (dtype=torch.complex)
+        Diagonal blocks of the Left-conencted greater Green's function
     """
     # -------------------------------------------------------------------
     # ---------- convert input arrays to the matrix data type -----------
     # ----------------- in case they are not matrices -------------------
     # -------------------------------------------------------------------
+    if need_lesser:
+        assert isinstance(s_in, list), "Lesser Green's function calculation requires s_in to be a list of coupling matrices"
+    if need_greater:
+        assert isinstance(s_out, list), "Greater Green's function calculation requires s_out to be a list of coupling matrices"
     for jj, item in enumerate(mat_d_list):
         mat_d_list[jj] = mat_d_list[jj] - (energy+1j*eta) * sd[jj]
 
@@ -69,10 +89,12 @@ def recursive_gf_cal(energy, mat_l_list, mat_d_list, mat_u_list, sd, su, sl, s_i
     # computes matrix sizes
     num_of_matrices = len(mat_d_list)  # Number of diagonal blocks.
     mat_shapes = [item.shape for item in mat_d_list]  # This gives the sizes of the diagonal matrices.
+
+
     # -------------------------------------------------------------------
     # -------------- compute retarded Green's function ------------------
     # -------------------------------------------------------------------
-    # allocate empty lists of certain lengths
+    # Firstly calculate the left-connected retarded Green's function
     gr_left = [None for _ in range(num_of_matrices)]
     gr_left[0] = tLA.solve(-mat_d_list[0], torch.eye(mat_shapes[0][0], dtype=mat_d_list[0].dtype))  # Initialising the retarded left connected.
 
@@ -85,20 +107,28 @@ def recursive_gf_cal(energy, mat_l_list, mat_d_list, mat_u_list, sd, su, sl, s_i
     gru = [None for _ in range(num_of_matrices-1)]
     grd = [i.clone() for i in gr_left]  # Our glorious benefactor.
     g_trans = gr_left[len(gr_left) - 1].clone()
-    gr_lc = [gr_left[len(gr_left) - 1].clone()]
+    if need_gr_lc:
+        gr_lc = [gr_left[len(gr_left) - 1].clone()]
+    else:
+        gr_lc = None
     for q in range(num_of_matrices - 2, -1, -1):  # Recursive algorithm
         grl[q] = grd[q + 1] @ mat_l_list[q] @ gr_left[q]  # (B5) We get the off-diagonal blocks for free.
         gru[q] = gr_left[q] @ mat_u_list[q] @ grd[q + 1]  # (B6) because we need .Tthem.T for the next calc:
         grd[q] = gr_left[q] + gr_left[q] @ mat_u_list[q] @ grl[q]  # (B4) I suppose I could also use the lower.
-        g_trans = gr_left[q] @ mat_u_list[q] @ g_trans
-        gr_lc.append(g_trans)
-    gr_lc.reverse()
+        g_trans = gr_left[q] @ mat_u_list[q] @ g_trans # iteratively calculate the (0, N-1) block of the retarded Green's function responsible for transmission
+        if need_gr_lc:
+            gr_lc.append(g_trans) # The last coloumn of the retarded Green's function: (:, N-1) block of the retarded Green's function
+    if need_gr_lc:
+        gr_lc.reverse()
+
+
+
     # -------------------------------------------------------------------
     # ------ compute the electron correlation function ( Lesser Green Function ) if needed --------
     # -------------------------------------------------------------------
 
-    if isinstance(s_in, list):
-        
+    if need_lesser:
+        assert isinstance(s_in, list), "need_lesser=True requires s_in to be a list of coupling matrices"
         gin_left = [None for _ in range(num_of_matrices)]
         # Keldysh formula: G^< = G^r * Sigma^< * G^a  ====> (-i * G^<) = G^r * (-i * Sigma^<) * G^a
         gin_left[0] = gr_left[0] @ s_in[0] @ gr_left[0].conj().T
@@ -129,9 +159,10 @@ def recursive_gf_cal(energy, mat_l_list, mat_d_list, mat_u_list, sd, su, sl, s_i
 
     # -------------------------------------------------------------------
     # -------- compute the hole correlation function if needed ----------
+    # Only used when considering phase-breaking scattering
     # -------------------------------------------------------------------
-    if isinstance(s_out, list):
-
+    if need_greater:
+        assert isinstance(s_out, list), "need_greater=True requires s_out to be a list of coupling matrices"
         gip_left = [None for _ in range(num_of_matrices)]
         gip_left[0] = gr_left[0] @ s_out[0] @ gr_left[0].conj()
 
@@ -155,7 +186,7 @@ def recursive_gf_cal(energy, mat_l_list, mat_d_list, mat_u_list, sd, su, sl, s_i
                              ((gip_left[q]@ mat_u_list[q].conj() @ grl[q].conj()) + (gru[q] @
                                 mat_l_list[q] @ gip_left[q]))
 
-            gpu[0] = gpl[0].conj().T
+            gpu[q] = gpl[q].conj().T
 
     # -------------------------------------------------------------------
     # -- remove energy from the main diagonal of th Hamiltonian matrix --
@@ -172,19 +203,19 @@ def recursive_gf_cal(energy, mat_l_list, mat_d_list, mat_u_list, sd, su, sl, s_i
     # ---- choose a proper output depending on the list of arguments ----
     # -------------------------------------------------------------------
 
-    if not isinstance(s_in, list) and not isinstance(s_out, list):
+    if not need_lesser and not need_greater:
         return g_trans,gr_lc, \
                grd, grl, gru, gr_left, \
                None, None, None, None, \
                None, None, None, None
 
-    elif isinstance(s_in, list) and not isinstance(s_out, list):
+    elif need_lesser and not need_greater:
         return g_trans,gr_lc, \
                grd, grl, gru, gr_left, \
                gnd, gnl, gnu, gin_left, \
                None, None, None, None
 
-    elif not isinstance(s_in, list) and isinstance(s_out, list):
+    elif not need_lesser and need_greater:
         return g_trans,gr_lc, \
                grd, grl, gru, gr_left, \
                None, None, None, None, \
@@ -198,7 +229,7 @@ def recursive_gf_cal(energy, mat_l_list, mat_d_list, mat_u_list, sd, su, sl, s_i
 
 
 def recursive_gf(energy, hl, hd, hu, sd, su, sl, left_se, right_se, seP=None, E_ref=0.0, s_in=0, s_out=0,
-                 eta=1e-5):
+                 eta=1e-5, need_lesser=False, need_greater=False, need_gr_lc=False):
     
     """The recursive Green's function algorithm is taken from
     M. P. Anantram, M. S. Lundstrom and D. E. Nikonov, Proceedings of the IEEE, 96, 1511 - 1550 (2008)
@@ -208,49 +239,34 @@ def recursive_gf(energy, hl, hd, hu, sd, su, sl, left_se, right_se, seP=None, E_
 
     Parameters
     ----------
-    energy : numpy.ndarray (dtype=numpy.float)
+    energy : torch.Tensor (dtype=torch.float)
         Energy array
-    mat_d_list : list of numpy.ndarray (dtype=numpy.float)
+    mat_d_list : list of torch.Tensor (dtype=torch.float)
         List of diagonal blocks
-    mat_u_list : list of numpy.ndarray (dtype=numpy.float)
+    mat_u_list : list of torch.Tensor (dtype=torch.float)
         List of upper-diagonal blocks
-    mat_l_list : list of numpy.ndarray (dtype=numpy.float)
+    mat_l_list : list of torch.Tensor (dtype=torch.float)
         List of lower-diagonal blocks
     s_in : Coupling Matrix Gamma from leads to the device
          (Default value = 0)
     s_out :
          (Default value = 0)
-    damp :
+    eta :
          (Default value = 0.000001j)
+    need_lesser : bool, optional
+        Whether to calculate the lesser Green's function, by default False. 
+        Lesser Green's function is used for electron density and current density calculation.
+    need_greater : bool, optional
+        Whether to calculate the greater Green's function, by default False.
+        Greater Green's function is used for hole density and phase-breaking scattering case.
+    need_gr_lc : bool, optional
+        Whether to calculate the left-connected blocks of the retarded Green's function responsible for transmission,
+        by default False for memory saving. 
 
     Returns
     -------
-    g_trans : numpy.ndarray (dtype=numpy.complex)
-        Blocks of the retarded Green's function responsible for transmission
-    grd : numpy.ndarray (dtype=numpy.complex)
-        Diagonal blocks of the retarded Green's function
-    grl : numpy.ndarray (dtype=numpy.complex)
-        Lower diagonal blocks of the retarded Green's function
-    gru : numpy.ndarray (dtype=numpy.complex)
-        Upper diagonal blocks of the retarded Green's function
-    gr_left : numpy.ndarray (dtype=numpy.complex)
-        Left-conencted blocks of the retarded Green's function
-    gnd : numpy.ndarray (dtype=numpy.complex)
-        Diagonal blocks of the retarded Green's function
-    gnl : numpy.ndarray (dtype=numpy.complex)
-        Lower diagonal blocks of the retarded Green's function
-    gnu : numpy.ndarray (dtype=numpy.complex)
-        Upper diagonal blocks of the retarded Green's function
-    gin_left : numpy.ndarray (dtype=numpy.complex)
-        Left-conencted blocks of the retarded Green's function
-    gpd : numpy.ndarray (dtype=numpy.complex)
-        Diagonal blocks of the retarded Green's function
-    gpl : numpy.ndarray (dtype=numpy.complex)
-        Lower diagonal blocks of the retarded Green's function
-    gpu : numpy.ndarray (dtype=numpy.complex)
-        Upper diagonal blocks of the retarded Green's function
-    gip_left : numpy.ndarray (dtype=numpy.complex)
-        Left-conencted blocks of the retarded Green's function
+     ans: tuple of torch.Tensor
+         The output of the recursive Green's function calculation
     """
 
     shift_energy = energy + E_ref
@@ -281,7 +297,11 @@ def recursive_gf(energy, hl, hd, hu, sd, su, sl, left_se, right_se, seP=None, E_
         # right_se = right_se[-idx1:, -idy1:]
         temp_mat_d_list[-1][-idx1:, -idy1:] = temp_mat_d_list[-1][-idx1:, -idy1:] + right_se[-idx1:, -idy1:]
 
-    ans = recursive_gf_cal(shift_energy, temp_mat_l_list, temp_mat_d_list, temp_mat_u_list, sd, su, sl, s_in=s_in, s_out=s_out, eta=eta)
+    ans = recursive_gf_cal(shift_energy, temp_mat_l_list, temp_mat_d_list, temp_mat_u_list, sd, su, sl,
+                           s_in=s_in, s_out=s_out, eta=eta,
+                           need_lesser=need_lesser, 
+                           need_greater=need_greater, 
+                           need_gr_lc=need_gr_lc)
 
     if isinstance(left_se, torch.Tensor):
         temp_mat_d_list[0][:idx0, :idy0] = temp_mat_d_list[0][:idx0, :idy0] - left_se[:idx0, :idy0]
