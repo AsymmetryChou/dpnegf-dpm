@@ -846,6 +846,15 @@ class NEGFHamiltonianInit(object):
                                                  HS_device["hl"][ik], HS_device["su"][ik], \
                                                  HS_device["sl"][ik], HS_device["hu"][ik]
 
+            # move blocks onto torch_device so downstream RGF runs on the chosen device.
+            hd_k = [b.to(self.torch_device) for b in hd_k]
+            sd_k = [b.to(self.torch_device) for b in sd_k]
+            hl_k = [b.to(self.torch_device) for b in hl_k]
+            su_k = [b.to(self.torch_device) for b in su_k]
+            sl_k = [b.to(self.torch_device) for b in sl_k]
+            hu_k = [b.to(self.torch_device) for b in hu_k]
+            V = torch.as_tensor(V).to(self.torch_device)
+
             if V.shape == torch.Size([]):
                 allorb = sum([hd_k[i].shape[0] for i in range(len(hd_k))])
                 V = V.repeat(allorb)
@@ -855,15 +864,18 @@ class NEGFHamiltonianInit(object):
                 l_slice = slice(counted, counted+hd_k[i].shape[0])
                 V_sub = V[l_slice].view(-1,1).cdouble()
                 hd_k[i] = hd_k[i] - V_sub * sd_k[i]
-                if i<len(hd_k)-1: 
+                if i<len(hd_k)-1:
                     hu_k[i] = hu_k[i] - V_sub * su_k[i]
                 if i > 0:
                     hl_k[i-1] = hl_k[i-1] - V_sub * sl_k[i-1]
                 counted += hd_k[i].shape[0]
-            
+
             return hd_k , sd_k, hl_k , su_k, sl_k, hu_k
         else:
             HD_k, SD_k = HS_device["HD"][ik], HS_device["SD"][ik]
+            HD_k = HD_k.to(self.torch_device)
+            SD_k = SD_k.to(self.torch_device)
+            V = torch.as_tensor(V).to(self.torch_device)
             return HD_k - V*SD_k, SD_k, [], [], [], []
     
     def get_hs_lead(self, kpoint, tab, v):
