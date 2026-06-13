@@ -63,7 +63,12 @@ def run(
     in_common_options = {}
     if jdata.get("device", None):
         in_common_options.update({"device": jdata["device"]})
-    
+    elif task_options.get("runner_device", None):
+        # Build the model on runner_device so that plain-tensor attributes
+        # inside DeePTB modules (e.g. r_max / r_max_dict in trinity.py) are
+        # placed on the correct device — nn.Module.to() does not move them.
+        in_common_options.update({"device": task_options["runner_device"]})
+
     if jdata.get("dtype", None):
         in_common_options.update({"dtype": jdata["dtype"]})
 
