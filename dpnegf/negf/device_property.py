@@ -101,7 +101,7 @@ class DeviceProperty(object):
         self.cdtype = torch.complex128
         if isinstance(rgf_device, str):
             rgf_device = torch.device(rgf_device)
-        self.device = rgf_device
+        self.rgf_device = rgf_device
         self.kBT = Boltzmann * e_T / eV2J
         self.e_T = e_T
         # self.efermi = efermi
@@ -168,7 +168,7 @@ class DeviceProperty(object):
             A boolean parameter that indicates whether the last column blocks of the retarded Green's function are needed.
         '''
         assert len(np.array(kpoint).reshape(-1)) == 3
-        energy = torch.as_tensor(energy, dtype=torch.complex128, device=self.device)
+        energy = torch.as_tensor(energy, dtype=torch.complex128, device=self.rgf_device)
         if energy.ndim == 0:
             energy = energy.reshape(1)
         assert energy.ndim == 1, f"energy must be 0-d, scalar, or 1-D [B]; got shape {tuple(energy.shape)}"
@@ -203,7 +203,7 @@ class DeviceProperty(object):
             self.V = Vbias
 
         assert torch.is_tensor(self.V)
-        self.V = self.V.to(self.device)
+        self.V = self.V.to(self.rgf_device)
         if not self.oldV is None:
             if torch.abs(self.V - self.oldV).sum() > 1e-5:
                 self.newV_flag = True
@@ -215,12 +215,12 @@ class DeviceProperty(object):
         if (not (hasattr(self, "hd") and hasattr(self, "sd"))) or (self.newK_flag or self.newV_flag):
             self.hd, self.sd, self.hl, self.su, self.sl, self.hu = self.hamiltonian.get_hs_device(self.kpoint, self.V, block_tridiagonal)
             # defensive .to(self.device) in case the blocks came back from a cached/legacy path on CPU.
-            self.hd = [b.to(self.device) for b in self.hd]
-            self.sd = [b.to(self.device) for b in self.sd]
-            self.hl = [b.to(self.device) for b in self.hl]
-            self.su = [b.to(self.device) for b in self.su]
-            self.sl = [b.to(self.device) for b in self.sl]
-            self.hu = [b.to(self.device) for b in self.hu]
+            self.hd = [b.to(self.rgf_device) for b in self.hd]
+            self.sd = [b.to(self.rgf_device) for b in self.sd]
+            self.hl = [b.to(self.rgf_device) for b in self.hl]
+            self.su = [b.to(self.rgf_device) for b in self.su]
+            self.sl = [b.to(self.rgf_device) for b in self.sl]
+            self.hu = [b.to(self.rgf_device) for b in self.hu]
 
 
         tags = ["g_trans","gr_lc", \
@@ -228,8 +228,8 @@ class DeviceProperty(object):
                "gnd", "gnl", "gnu", "gin_left", \
                "gpd", "gpl", "gpu", "gip_left"]
 
-        seL = self.lead_L.se.to(self.device)
-        seR = self.lead_R.se.to(self.device)
+        seL = self.lead_L.se.to(self.rgf_device)
+        seR = self.lead_R.se.to(self.rgf_device)
         if batched_mode:
             assert seL.ndim == 3 and seR.ndim == 3, f"In batched mode, the self-energy should have shape [B,n,n], but got {seL.shape} and {seR.shape}"
         else:
@@ -266,7 +266,7 @@ class DeviceProperty(object):
             else:
                 seinL = 1j*(seL-seL.conj().T) * self.lead_L.fermi_dirac(energy+self.E_ref).reshape(-1)
                 seinR = 1j*(seR-seR.conj().T) * self.lead_R.fermi_dirac(energy+self.E_ref).reshape(-1)
-                s_in = [torch.zeros(i.shape, dtype=torch.complex128, device=self.device) for i in self.hd]
+                s_in = [torch.zeros(i.shape, dtype=torch.complex128, device=self.rgf_device) for i in self.hd]
                 s_in[0][:idx0,:idy0] = s_in[0][:idx0,:idy0] + seinL[:idx0,:idy0]
                 s_in[-1][-idx1:,-idy1:] = s_in[-1][-idx1:,-idy1:] + seinR[-idx1:,-idy1:]
         else:
@@ -375,8 +375,8 @@ class DeviceProperty(object):
         g_trans = self.g_trans
         batched = g_trans.ndim == 3
         tx, ty = g_trans.shape[-2], g_trans.shape[-1]
-        gammaL_full = self.lead_L.gamma.to(self.device)
-        gammaR_full = self.lead_R.gamma.to(self.device)
+        gammaL_full = self.lead_L.gamma.to(self.rgf_device)
+        gammaR_full = self.lead_R.gamma.to(self.rgf_device)
         lx = gammaL_full.shape[-2]
         rx = gammaR_full.shape[-2]
         x0 = min(lx, tx)
@@ -384,8 +384,8 @@ class DeviceProperty(object):
 
         gL_shape = (g_trans.shape[0], tx, tx) if batched else (tx, tx)
         gR_shape = (g_trans.shape[0], ty, ty) if batched else (ty, ty)
-        gammaL = torch.zeros(size=gL_shape, dtype=self.cdtype, device=self.device)
-        gammaR = torch.zeros(size=gR_shape, dtype=self.cdtype, device=self.device)
+        gammaL = torch.zeros(size=gL_shape, dtype=self.cdtype, device=self.rgf_device)
+        gammaR = torch.zeros(size=gR_shape, dtype=self.cdtype, device=self.rgf_device)
         if batched:
             gammaL[:, :x0, :x0] = gammaL[:, :x0, :x0] + gammaL_full[:, :x0, :x0]
             gammaR[:, -x1:, -x1:] = gammaR[:, -x1:, -x1:] + gammaR_full[:, -x1:, -x1:]
@@ -410,12 +410,12 @@ class DeviceProperty(object):
             self.hd, self.sd, self.hl, self.su, self.sl, self.hu = \
                 self.hamiltonian.get_hs_device(self.kpoint, self.V, self.block_tridiagonal)
             # defensive .to(self.device) in case the blocks came back from a cached/legacy path on CPU.
-            self.hd = [b.to(self.device) for b in self.hd]
-            self.sd = [b.to(self.device) for b in self.sd]
-            self.hl = [b.to(self.device) for b in self.hl]
-            self.su = [b.to(self.device) for b in self.su]
-            self.sl = [b.to(self.device) for b in self.sl]
-            self.hu = [b.to(self.device) for b in self.hu]
+            self.hd = [b.to(self.rgf_device) for b in self.hd]
+            self.sd = [b.to(self.rgf_device) for b in self.sd]
+            self.hl = [b.to(self.rgf_device) for b in self.hl]
+            self.su = [b.to(self.rgf_device) for b in self.su]
+            self.sl = [b.to(self.rgf_device) for b in self.sl]
+            self.hu = [b.to(self.rgf_device) for b in self.hu]
 
         for jj in range(len(self.grd)):
             if not self.block_tridiagonal or len(self.gru) == 0:
@@ -479,9 +479,9 @@ class DeviceProperty(object):
         # check the energy grid satisfied the requirement
         
         na = len(self.norbs_per_atom)
-        local_current = torch.zeros(na, na, device=self.device)
+        local_current = torch.zeros(na, na, device=self.rgf_device)
         hd = self.hamiltonian.get_hs_device(kpoint=self.kpoint, V=self.V, block_tridiagonal=self.block_tridiagonal)[0][0]
-        hd = hd.to(self.device)  # defensive .to(self.device) in case the block came back from a cached/legacy path on CPU.
+        hd = hd.to(self.rgf_device)  # defensive .to(self.device) in case the block came back from a cached/legacy path on CPU.
 
         for i in range(na):
             for j in range(na):
@@ -510,7 +510,7 @@ class DeviceProperty(object):
         
         '''
         dm = Ozaki(**dm_options)
-        DM_eq, DM_neq = dm.integrate(deviceprop=self.device, kpoint=self.kpoint)
+        DM_eq, DM_neq = dm.integrate(deviceprop=self.rgf_device, kpoint=self.kpoint)
 
         return DM_eq, DM_neq
     
