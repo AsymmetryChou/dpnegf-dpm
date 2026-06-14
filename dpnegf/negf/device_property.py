@@ -406,9 +406,16 @@ class DeviceProperty(object):
         '''
         dos = 0
         #TODO: transfer cal_dos to static method for any k and energy
-        if (not(hasattr(self, "hd") and hasattr(self, "sd"))) or (self.newK_flag or self.newV_flag):               
+        if (not(hasattr(self, "hd") and hasattr(self, "sd"))) or (self.newK_flag or self.newV_flag):
             self.hd, self.sd, self.hl, self.su, self.sl, self.hu = \
                 self.hamiltonian.get_hs_device(self.kpoint, self.V, self.block_tridiagonal)
+            # defensive .to(self.device) in case the blocks came back from a cached/legacy path on CPU.
+            self.hd = [b.to(self.device) for b in self.hd]
+            self.sd = [b.to(self.device) for b in self.sd]
+            self.hl = [b.to(self.device) for b in self.hl]
+            self.su = [b.to(self.device) for b in self.su]
+            self.sl = [b.to(self.device) for b in self.sl]
+            self.hu = [b.to(self.device) for b in self.hu]
 
         for jj in range(len(self.grd)):
             if not self.block_tridiagonal or len(self.gru) == 0:
@@ -474,6 +481,7 @@ class DeviceProperty(object):
         na = len(self.norbs_per_atom)
         local_current = torch.zeros(na, na, device=self.device)
         hd = self.hamiltonian.get_hs_device(kpoint=self.kpoint, V=self.V, block_tridiagonal=self.block_tridiagonal)[0][0]
+        hd = hd.to(self.device)  # defensive .to(self.device) in case the block came back from a cached/legacy path on CPU.
 
         for i in range(na):
             for j in range(na):

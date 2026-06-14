@@ -841,7 +841,7 @@ class NEGF(object):
 
         if scf_require==False:
             self.out["k"] = np.array(self.out["k"])
-            self.out['T_avg'] = torch.tensor(self.out['wk']) @ torch.stack(list(self.out["T_k"].values()))
+            self.out['T_avg'] = torch.tensor(self.out['wk']) @ torch.stack(list(self.out["T_k"].values())).cpu()
             # TODO:check the following code for multiple k points calculation
             if self.out_current_nscf:
                 self.out["BIAS_POTENTIAL_NSCF"], self.out["CURRENT_NSCF"] = self.compute_current_nscf(self.uni_grid, self.out["T_avg"])
