@@ -1069,10 +1069,11 @@ def negf():
         Argument("out_ldos", bool, optional=True, default=False, doc=doc_out_ldos),
         Argument("out_lcurrent", bool, optional=True, default=False, doc=doc_out_lcurrent),
         Argument("n_cpus", [int, None], optional=True, default=None, doc="Number of CPU cores for parallel self-energy calculation. Default None uses os.cpu_count()."),
-        Argument("runner_device", str, optional=True, default="cpu",
-                 doc="Device used for NEGF Hamiltonian init and recursive Green's function (RGF). "
-                     "'cpu' (default) or 'cuda'. Self-energy calculation always runs on CPU "
-                     "because it goes through joblib+numba.")
+        Argument("rgf_device", str, optional=True, default="cpu",
+                 doc="Device used only for the RGF (recursive Green's function) step. "
+                     "'cpu' (default) or 'cuda'. Hamiltonian initialization always runs "
+                     "on CPU (it is the memory-heavy phase). Self-energy always runs on "
+                     "CPU because it goes through joblib + numba.")
     ]
 
 def stru_options():

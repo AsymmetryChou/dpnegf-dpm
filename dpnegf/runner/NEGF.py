@@ -54,7 +54,7 @@ class NEGF(object):
                 out_tc: bool=False,out_dos: bool=False,out_density: bool=False,out_potential: bool=False,
                 out_current: bool=False,out_current_nscf: bool=False,out_ldos: bool=False,out_lcurrent: bool=False,
                 results_path: Optional[str]=None, plot_blocks: Optional[bool]=False,
-                runner_device: Union[str, torch.device]='cpu',
+                rgf_device: Union[str, torch.device]='cpu',
                 AtomicData_options: Optional[dict]=None,
                 n_cpus: Optional[int]=None,
                 e_batch_size: Optional[int]=None,
@@ -64,9 +64,9 @@ class NEGF(object):
         # self.model = model # No need to set model as property for memory saving
         self.results_path = results_path
         self.cdtype = torch.complex128
-        if isinstance(runner_device, str):
-            runner_device = torch.device(runner_device)
-        self.runner_device = runner_device
+        if isinstance(rgf_device, str):
+            rgf_device = torch.device(rgf_device)
+        self.rgf_device = rgf_device
         self.n_cpus = n_cpus
         self.e_batch_size = e_batch_size
                
@@ -156,7 +156,7 @@ class NEGF(object):
                                                     stru_options=self.stru_options,
                                                     unit = self.unit, 
                                                     results_path=self.results_path,
-                                                    torch_device = self.runner_device)
+                                                    torch_device = torch.device("cpu"))
         # if useBloch is None, structure_leads_fold,bloch_sorted_indices,bloch_R_lists = None,None,None
         struct_device, struct_leads,structure_leads_fold,bloch_sorted_indices,bloch_R_lists = \
             self.negf_hamiltonian.initialize(kpoints=self.kpoints,
@@ -184,7 +184,7 @@ class NEGF(object):
         e_fermi = {}; chemiPot = {}
         # calculate Fermi level
         if  self.e_fermi is None:        
-            elec_cal = ElecStruCal(model=model,device=self.runner_device)
+            elec_cal = ElecStruCal(model=model,device=torch.device("cpu"))
             nel_atom_lead = self.get_nel_atom_lead(
                                 struct_leads, 
                                 charge={lead_tag: self.stru_options[lead_tag].get("charge", 0) for lead_tag in ["lead_L", "lead_R"]}
@@ -237,7 +237,7 @@ class NEGF(object):
         # initialize deviceprop and leadprop
         self.deviceprop = DeviceProperty(self.negf_hamiltonian, struct_device, results_path=self.results_path,
                                          efermi=self.e_fermi, chemiPot=chemiPot, E_ref=E_ref,
-                                         runner_device=self.runner_device)
+                                         rgf_device=self.rgf_device)
         self.deviceprop.set_leadLR(
                 lead_L=LeadProperty(
                 hamiltonian=self.negf_hamiltonian, 
@@ -597,7 +597,7 @@ class NEGF(object):
 
             self.out['k'].append(k)
             self.out['wk'].append(self.wk[ik])
-            self.free_charge.update({str(k):torch.zeros_like(torch.tensor(self.device_atom_norbs),dtype=torch.complex128, device=self.runner_device)})
+            self.free_charge.update({str(k):torch.zeros_like(torch.tensor(self.device_atom_norbs),dtype=torch.complex128, device=self.rgf_device)})
             log.info(f"Properties computation at k = ({', '.join([f'{kk:>6.4f}' for kk in k])})")
 
             if scf_require:

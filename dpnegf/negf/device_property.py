@@ -93,15 +93,15 @@ class DeviceProperty(object):
     '''    
     def __init__(self, hamiltonian, structure, results_path, e_T=300,
                  efermi: dict=None, chemiPot: dict=None, E_ref: float=None,
-                 runner_device: Union[str, torch.device]="cpu") -> None:
+                 rgf_device: Union[str, torch.device]="cpu") -> None:
         self.greenfuncs = 0
         self.hamiltonian = hamiltonian
         self.structure = structure # ase Atoms
         self.results_path = results_path
         self.cdtype = torch.complex128
-        if isinstance(runner_device, str):
-            runner_device = torch.device(runner_device)
-        self.device = runner_device
+        if isinstance(rgf_device, str):
+            rgf_device = torch.device(rgf_device)
+        self.device = rgf_device
         self.kBT = Boltzmann * e_T / eV2J
         self.e_T = e_T
         # self.efermi = efermi
