@@ -69,6 +69,20 @@ class NEGF(object):
         self.rgf_device = rgf_device
         self.n_cpus = n_cpus
         self.e_batch_size = e_batch_size
+
+        # The RGF q-loop allocates/frees many small slabs; with the default
+        # cudaMalloc-backed caching allocator this fragments quickly on long
+        # energy grids. expandable_segments avoids that, but must be set before
+        # torch initializes its CUDA context — by the time we get here it's
+        # already live, so we can only nudge the user.
+        if isinstance(self.rgf_device, torch.device) and self.rgf_device.type == "cuda":
+            if "expandable_segments" not in os.environ.get("PYTORCH_CUDA_ALLOC_CONF", ""):
+                log.warning(
+                    "RGF on CUDA can fragment the caching allocator on long energy "
+                    "grids. Consider exporting "
+                    "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True BEFORE invoking "
+                    "dpnegf (must be set before torch's CUDA context initializes)."
+                )
                
         # get the parameters
         self.ele_T = ele_T
