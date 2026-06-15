@@ -230,3 +230,93 @@ def test_batched_cuda_smoke():
             for cq, gq in zip(c, g):
                 assert gq.device.type == "cuda"
                 assert torch.allclose(cq, gq.cpu(), atol=1e-8)
+
+
+def _ans_equal_skipping_gr_left(a, b):
+    """Compare two recursive_gf outputs slot-by-slot. Position 5 (gr_left) is
+    expected to differ when one call uses keep_gr_left=False — skip it.
+    Everything else must be bit-identical."""
+    for i, (x, y) in enumerate(zip(a, b)):
+        if i == 5:                          # gr_left slot
+            continue
+        if x is None:
+            assert y is None
+            continue
+        if torch.is_tensor(x):
+            assert torch.equal(x, y), f"tuple slot {i} mismatch"
+        else:
+            for q, (xq, yq) in enumerate(zip(x, y)):
+                if xq is None:
+                    assert yq is None
+                    continue
+                assert torch.equal(xq, yq), f"tuple slot {i}, block {q} mismatch"
+
+
+def test_keep_gr_left_false_outputs_match_true():
+    """Lever 1 + 2 release path: with need_lesser=False, need_greater=False, the
+    keep_gr_left=False call must produce the same tensors (modulo gr_left) as
+    the keep_gr_left=True call. Runs on CPU; correctness, not memory."""
+    B = 8
+    block_sizes = [8, 6, 8]
+    hd, sd, hl, hu, sl, su, left_se, right_se, energies = _make_btd_inputs(
+        B, block_sizes, seed=11)
+
+    common = dict(energy=energies, hl=hl, hd=hd, hu=hu, sd=sd, su=su, sl=sl,
+                  left_se=left_se, right_se=right_se,
+                  s_in=0, eta=1e-5,
+                  need_lesser=False, need_greater=False, need_gr_lc=False)
+    ans_keep = recursive_gf(**common, keep_gr_left=True)
+    ans_drop = recursive_gf(**common, keep_gr_left=False)
+
+    _ans_equal_skipping_gr_left(ans_keep, ans_drop)
+    assert ans_drop[5] is None                   # gr_left dropped
+    assert isinstance(ans_keep[5], list)         # gr_left populated
+
+
+def test_keep_gr_left_false_outputs_match_true_uniform():
+    """Same equivalence check but on the uniform [K,B,n,n] fast path (Lever 1b)."""
+    B = 8
+    block_sizes = [8, 8, 8, 8]
+    hd, sd, hl, hu, sl, su, left_se, right_se, energies = _make_btd_inputs(
+        B, block_sizes, seed=12)
+
+    common = dict(energy=energies, hl=hl, hd=hd, hu=hu, sd=sd, su=su, sl=sl,
+                  left_se=left_se, right_se=right_se,
+                  s_in=0, eta=1e-5,
+                  need_lesser=False, need_greater=False, need_gr_lc=False)
+    ans_keep = recursive_gf(**common, keep_gr_left=True)
+    ans_drop = recursive_gf(**common, keep_gr_left=False)
+
+    _ans_equal_skipping_gr_left(ans_keep, ans_drop)
+    assert ans_drop[5] is None
+    assert isinstance(ans_keep[5], list)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_peak_memory_decreases_with_keep_gr_left_false():
+    """Lever 1 (per-slot release) + Lever 2 (keep_gr_left wiring) regression.
+    On a synthetic batched problem, keep_gr_left=False must use strictly less
+    CUDA peak memory than keep_gr_left=True, and outputs (excluding gr_left)
+    must be bit-identical."""
+    B, block_sizes = 8, [16, 16, 16, 16, 16, 16, 16, 16]
+    hd, sd, hl, hu, sl, su, left_se, right_se, energies = _make_btd_inputs(
+        B, block_sizes, seed=13, device="cuda")
+
+    common = dict(energy=energies, hl=hl, hd=hd, hu=hu, sd=sd, su=su, sl=sl,
+                  left_se=left_se, right_se=right_se,
+                  s_in=0, eta=1e-5,
+                  need_lesser=False, need_greater=False, need_gr_lc=False)
+
+    torch.cuda.empty_cache(); torch.cuda.reset_peak_memory_stats()
+    ans_keep = recursive_gf(**common, keep_gr_left=True)
+    peak_keep = torch.cuda.max_memory_allocated()
+
+    torch.cuda.empty_cache(); torch.cuda.reset_peak_memory_stats()
+    ans_drop = recursive_gf(**common, keep_gr_left=False)
+    peak_drop = torch.cuda.max_memory_allocated()
+
+    _ans_equal_skipping_gr_left(ans_keep, ans_drop)
+    assert peak_drop < peak_keep, (
+        f"keep_gr_left=False peak {peak_drop} >= keep_gr_left=True peak {peak_keep}; "
+        "per-slot release did not reduce memory."
+    )
