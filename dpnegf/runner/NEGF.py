@@ -784,12 +784,21 @@ class NEGF(object):
                                     ldos_chunk = ldos_chunk.unsqueeze(0)
                                 self.out.setdefault('LDOS', {}).setdefault(str(k), []).append(ldos_chunk.cpu())
 
-                        # Restore lead.se to scalar [n,n] before releasing the GF dict so
-                        # the batched [B,n,n] GPU copies become collectable, and so any
-                        # subsequent scalar caller (density modules, lcurrent loop, future
-                        # SCF re-entry) sees the expected shape.
-                        self.deviceprop.lead_L.se = seL_list[-1]
-                        self.deviceprop.lead_R.se = seR_list[-1]
+                        # Restore lead.se to a scalar [n,n] before releasing the GF
+                        # dict. For B>1 we clone the last per-E tensor so the new
+                        # lead.se doesn't share storage with anything still
+                        # referenced through seL_list/seR_list, then drop both
+                        # lists so release_greenfuncs's empty_cache() has the per-E
+                        # and stacked [B,n,n] copies to release.
+                        if e_batch_size > 1:
+                            self.deviceprop.lead_L.se = seL_list[-1].detach().clone()
+                            self.deviceprop.lead_R.se = seR_list[-1].detach().clone()
+                        else:
+                            # B=1 path: lead.se already IS the per-E [n,n] tensor;
+                            # preserve byte-identical behavior for the scalar case.
+                            self.deviceprop.lead_L.se = seL_list[-1]
+                            self.deviceprop.lead_R.se = seR_list[-1]
+                        del seL_list, seR_list
                         self.deviceprop.release_greenfuncs()
                             
                     # over energy loop in uni_gird
