@@ -741,19 +741,22 @@ class NEGF(object):
                                 )
 
                             if self.out_dos:
-                                self.out.setdefault('DOS', {}).setdefault(str(k), []).append(self.compute_DOS(k).reshape(-1))
+                                self.out.setdefault('DOS', {}).setdefault(str(k), []).append(self.compute_DOS(k).reshape(-1).cpu())
                             if self.out_tc or self.out_current_nscf:
-                                self.out.setdefault('T_k', {}).setdefault(str(k), []).append(self.compute_TC(k).reshape(-1))
+                                self.out.setdefault('T_k', {}).setdefault(str(k), []).append(self.compute_TC(k).reshape(-1).cpu())
                             if self.out_ldos:
                                 ldos_chunk = self.compute_LDOS(k)
                                 if ldos_chunk.ndim == 1:  # scalar-E chunk → [na]
                                     ldos_chunk = ldos_chunk.unsqueeze(0)
-                                self.out.setdefault('LDOS', {}).setdefault(str(k), []).append(ldos_chunk)
+                                self.out.setdefault('LDOS', {}).setdefault(str(k), []).append(ldos_chunk.cpu())
 
-                        # Restore lead.se to scalar [n,n] so downstream scalar callers
-                        # (density modules, lcurrent loop, future SCF re-entry) see the expected shape.
+                        # Restore lead.se to scalar [n,n] before releasing the GF dict so
+                        # the batched [B,n,n] GPU copies become collectable, and so any
+                        # subsequent scalar caller (density modules, lcurrent loop, future
+                        # SCF re-entry) sees the expected shape.
                         self.deviceprop.lead_L.se = seL_list[-1]
                         self.deviceprop.lead_R.se = seR_list[-1]
+                        self.deviceprop.release_greenfuncs()
                             
                     # over energy loop in uni_gird
                     # The following code is for output properties before NEGF ends

@@ -290,6 +290,16 @@ class DeviceProperty(object):
 
         # self.green = update_temp_file(update_fn=fn, file_path=GFpath, ee=ee, tags=tags, info="Computing Green's Function")
 
+    def release_greenfuncs(self):
+        '''Drop the Green's-function dict so the underlying rgf_device storage
+        can be freed before the next energy chunk. H/S blocks are kept resident
+        (they are k,V-dependent, not energy-dependent). The runner is
+        responsible for restoring scalar lead.se references before calling
+        this, so any batched [B,n,n] copies become collectable too.'''
+        self.greenfuncs = 0
+        if isinstance(self.rgf_device, torch.device) and self.rgf_device.type == "cuda":
+            torch.cuda.empty_cache()
+
     def _cal_current_(self, espacing):
         '''calculate the current based on the voltage difference 
 
@@ -311,14 +321,6 @@ class DeviceProperty(object):
         # check the energy grid satisfied the requirement
         xl = min(v_L, v_R)-4*self.kBT
         xu = max(v_L, v_R)+4*self.kBT
-
-        def fcn(e):
-            self.cal_green_function()
-
-        cc = leggauss(fcn=self._cal_tc_)
-        
-        int_grid, int_weight = gauss_xw(xl=xl, xu=xu, n=int((xu-xl)/espacing))
-        
 
         self.__CURRENT__ = simpson(y=(self.lead_L.fermi_dirac(self.ee+self.E_ref) 
                                     - self.lead_R.fermi_dirac(self.ee+self.E_ref)) * self.tc, x=self.ee)
