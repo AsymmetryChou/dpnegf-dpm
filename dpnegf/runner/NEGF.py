@@ -585,6 +585,37 @@ class NEGF(object):
 
 
 
+    def _auto_chunk_size(self, n_grid):
+        """Pick a chunk size from free CUDA memory when the user didn't set
+        ``e_batch_size``. Returns the full grid length on CPU / when the
+        device geometry isn't probable yet.
+
+        Per-energy peak (post per-slot-release, complex128) approximated as
+            bytes_per_E ~= C * K * n_max**2 * 16
+        with C bundling the live tensors in the worst backward-sweep slot
+        (grd full + grl + gru full + decaying gr_left tail + gU + transients).
+        C=10 with a 0.7x free-memory budget; deliberately conservative because
+        without expandable_segments the allocator can't defragment on demand.
+        """
+        rgf_dev = self.rgf_device
+        if not (isinstance(rgf_dev, torch.device) and rgf_dev.type == "cuda"):
+            return n_grid
+        try:
+            free_bytes, _total = torch.cuda.mem_get_info(rgf_dev)
+            n_max = max(int(b.shape[-1]) for b in self.deviceprop.hd)
+            K = len(self.deviceprop.hd)
+        except Exception:
+            return n_grid
+        per_e = 10 * K * (n_max ** 2) * 16
+        if per_e <= 0:
+            return n_grid
+        b = max(1, min(n_grid, int(0.7 * free_bytes) // per_e))
+        log.info(
+            f"auto e_batch_size={b} (free={free_bytes/2**30:.2f} GiB, "
+            f"per_E~={per_e/2**20:.1f} MiB, K={K}, n_max={n_max})"
+        )
+        return b
+
     def negf_compute(self,scf_require=False,Vbias=None):
         
         assert scf_require is not None, "scf_require should be set to True or False"
@@ -704,7 +735,10 @@ class NEGF(object):
                                 self.out.setdefault('LDOS', {}).setdefault(str(k), []).append(self.compute_LDOS(k))
                     else:
                         # Non-SCF: solve a whole chunk of energies in one batched recursive_gf call.
-                        chunk = self.e_batch_size if self.e_batch_size is not None else len(self.uni_grid)
+                        if self.e_batch_size is not None:
+                            chunk = self.e_batch_size
+                        else:
+                            chunk = self._auto_chunk_size(len(self.uni_grid))
                         for e_chunk in torch.split(self.uni_grid, chunk):
                             e_batch_size = len(e_chunk)
                             log.info(
