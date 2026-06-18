@@ -607,9 +607,12 @@ class NEGF(object):
         Per-energy peak (post per-slot-release, complex128) approximated as
             bytes_per_E ~= C * K * n_max**2 * 16
         with C bundling the live tensors in the worst backward-sweep slot
-        (grd full + grl + gru full + decaying gr_left tail + gU + transients).
-        C=10 with a 0.7x free-memory budget; deliberately conservative because
-        without expandable_segments the allocator can't defragment on demand.
+        (grd full + grl + gru full + decaying gr_left tail + gU + transients
+        + the K-resident H/S diagonal & off-diagonal lists that survive across
+        chunks). C=14 with a 0.5x free-memory budget; deliberately conservative
+        because without expandable_segments the allocator can't defragment on
+        demand, and on real workloads (CNT10/long6) the previous 10x / 0.7
+        combination still picked a chunk that OOM'd on a 15.77 GiB V100.
         """
         rgf_dev = self.rgf_device
         if not (isinstance(rgf_dev, torch.device) and rgf_dev.type == "cuda"):
@@ -620,10 +623,10 @@ class NEGF(object):
             K = len(self.deviceprop.hd)
         except Exception:
             return n_grid
-        per_e = 10 * K * (n_max ** 2) * 16
+        per_e = 14 * K * (n_max ** 2) * 16
         if per_e <= 0:
             return n_grid
-        b = max(1, min(n_grid, int(0.7 * free_bytes) // per_e))
+        b = max(1, min(n_grid, int(0.5 * free_bytes) // per_e))
         log.info(
             f"auto e_batch_size={b} (free={free_bytes/2**30:.2f} GiB, "
             f"per_E~={per_e/2**20:.1f} MiB, K={K}, n_max={n_max})"
@@ -751,8 +754,19 @@ class NEGF(object):
                         # Non-SCF: solve a whole chunk of energies in one batched recursive_gf call.
                         if self.e_batch_size is not None:
                             chunk = self.e_batch_size
+                            # The user-supplied value bypasses the auto-budget.
+                            rgf_dev = self.rgf_device
+                            if isinstance(rgf_dev, torch.device) and rgf_dev.type == "cuda":
+                                cap = self._auto_chunk_size(len(self.uni_grid))
+                                if chunk > cap:
+                                    log.warning(
+                                        f"user e_batch_size={chunk} exceeds the "
+                                        f"CUDA auto-cap={cap} on {rgf_dev}; "
+                                    )
                         else:
                             chunk = self._auto_chunk_size(len(self.uni_grid))
+                        log.info(f"Using e_batch_size={chunk} for energy loop with {len(self.uni_grid)} points")
+
                         for e_chunk in torch.split(self.uni_grid, chunk):
                             e_batch_size = len(e_chunk)
                             log.info(
