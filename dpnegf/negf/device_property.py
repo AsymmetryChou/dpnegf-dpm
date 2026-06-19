@@ -135,7 +135,7 @@ class DeviceProperty(object):
 
 
     def cal_green_function(self, energy, kpoint, eta_device=0., block_tridiagonal=True, Vbias=None,
-                           HS_inmem:bool=True, need_lesser:bool=False, need_greater:bool=False, need_gr_lc:bool=True):
+                           HS_inmem:bool=True, need_lesser:bool=False, need_greater:bool=False, need_gr_lc:bool=False):
         ''' computes the Green's function for a given energy and k-point in device.
 
         the tags used here to identify different Green's functions follows the NEGF theory 
@@ -273,11 +273,16 @@ class DeviceProperty(object):
         else:
             s_in = 0
 
+        # gr_left is only consumed inside the lesser/greater forward pass of the
+        # kernel. If neither is active, the per-block list would sit on the GPU
+        # unread; ask the kernel to drop it so its slots are freed mid-sweep.
+        keep_gr_left = bool(need_lesser or need_greater)
         ans = recursive_gf(energy, hl=self.hl, hd=self.hd, hu=self.hu,
                             sd=self.sd, su=self.su, sl=self.sl,
                             left_se=seL, right_se=seR, seP=None, s_in=s_in,
                             s_out=None, eta=eta_device, E_ref=self.E_ref,
-                            need_lesser=need_lesser, need_greater=need_greater, need_gr_lc=need_gr_lc)
+                            need_lesser=need_lesser, need_greater=need_greater,
+                            need_gr_lc=need_gr_lc, keep_gr_left=keep_gr_left)
             # green shape [[g_trans, grd, grl,...],[g_trans, ...]]
         
         for t in range(len(tags)):
@@ -289,6 +294,16 @@ class DeviceProperty(object):
             del self.hd, self.sd, self.hl, self.su, self.sl, self.hu
 
         # self.green = update_temp_file(update_fn=fn, file_path=GFpath, ee=ee, tags=tags, info="Computing Green's Function")
+
+    def release_greenfuncs(self):
+        '''Drop the Green's-function dict so the underlying rgf_device storage
+        can be freed before the next energy chunk. H/S blocks are kept resident
+        (they are k,V-dependent, not energy-dependent). The runner is
+        responsible for restoring scalar lead.se references before calling
+        this, so any batched [B,n,n] copies become collectable too.'''
+        self.greenfuncs = 0
+        if isinstance(self.rgf_device, torch.device) and self.rgf_device.type == "cuda":
+            torch.cuda.empty_cache()
 
     def _cal_current_(self, espacing):
         '''calculate the current based on the voltage difference 
@@ -311,14 +326,6 @@ class DeviceProperty(object):
         # check the energy grid satisfied the requirement
         xl = min(v_L, v_R)-4*self.kBT
         xu = max(v_L, v_R)+4*self.kBT
-
-        def fcn(e):
-            self.cal_green_function()
-
-        cc = leggauss(fcn=self._cal_tc_)
-        
-        int_grid, int_weight = gauss_xw(xl=xl, xu=xu, n=int((xu-xl)/espacing))
-        
 
         self.__CURRENT__ = simpson(y=(self.lead_L.fermi_dirac(self.ee+self.E_ref) 
                                     - self.lead_R.fermi_dirac(self.ee+self.E_ref)) * self.tc, x=self.ee)
