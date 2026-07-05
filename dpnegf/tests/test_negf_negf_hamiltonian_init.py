@@ -317,5 +317,58 @@ def test_calc_principal_layers_disp_vec():
 #     assert na == 4
 #     assert hamiltonian.device_norbs==device_norbs_standard
 
-   
+def test_sort_device_lexico_preserves_species():
+    """Regression test for the device-sort species desync bug.
+
+    The block-tridiagonal device sort must permute the whole atoms slice so
+    that atomic species stay attached to their coordinates. A previous version
+    permuted only ``positions``, which for a non-pre-sorted, multi-species
+    device relocated species onto the wrong sites and corrupted the
+    Hamiltonian.
+    """
+    from ase import Atoms
+    from dpnegf.negf.negf_hamiltonian_init import NEGFHamiltonianInit
+    from dpnegf.negf.sort_btd import sort_lexico
+
+    # leads: 2 C atoms each; device: mixed C/H that is NOT lexicographically
+    # ordered along z, so a correct sort must actually permute it.
+    #   idx: 0  1 | 2   3   4   5 | 6  7
+    #   sym: C  C | C   H   C   H | C  C
+    #   z  : 0  1 | 5   3   4   2 | 8  9
+    symbols = ["C", "C", "C", "H", "C", "H", "C", "C"]
+    zs = [0.0, 1.0, 5.0, 3.0, 4.0, 2.0, 8.0, 9.0]
+    positions = [[0.0, 0.0, z] for z in zs]
+    atoms = Atoms(symbols=symbols, positions=positions,
+                  cell=[10.0, 10.0, 10.0], pbc=[True, True, False])
+    device_id = [2, 6]
+
+    # ground-truth mapping computed independently
+    dev_pos = np.array(positions)[device_id[0]:device_id[1]]
+    perm = sort_lexico(dev_pos)
+    expected_dev_sym = np.array(symbols[device_id[0]:device_id[1]])[perm].tolist()
+    expected_dev_z = dev_pos[perm][:, 2].tolist()
+
+    sorted_atoms = NEGFHamiltonianInit._sort_device_lexico(atoms, device_id)
+    got_sym = list(sorted_atoms.get_chemical_symbols())
+    got_z = sorted_atoms.positions[:, 2].tolist()
+
+    # device region: species stay attached to their (now sorted) coordinates
+    assert got_sym[device_id[0]:device_id[1]] == expected_dev_sym
+    assert np.allclose(got_z[device_id[0]:device_id[1]], expected_dev_z)
+    # device coordinates are actually sorted ascending in z
+    assert got_z[device_id[0]:device_id[1]] == sorted(got_z[device_id[0]:device_id[1]])
+    # H atoms remain H at the correct sorted coordinates (z=2 and z=3)
+    dev_pairs = list(zip(got_sym[device_id[0]:device_id[1]],
+                         got_z[device_id[0]:device_id[1]]))
+    assert ("H", 2.0) in dev_pairs and ("H", 3.0) in dev_pairs
+
+    # leads are untouched (verbatim)
+    assert got_sym[:device_id[0]] == symbols[:device_id[0]]
+    assert got_sym[device_id[1]:] == symbols[device_id[1]:]
+    assert np.allclose(got_z[:device_id[0]], zs[:device_id[0]])
+    assert np.allclose(got_z[device_id[1]:], zs[device_id[1]:])
+
+    # cell and pbc preserved
+    assert np.allclose(sorted_atoms.cell, atoms.cell)
+    assert list(sorted_atoms.pbc) == list(atoms.pbc)   
 

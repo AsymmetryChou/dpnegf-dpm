@@ -39,6 +39,7 @@ examples/CNT/output*
 examples/CNT/*long*
 examples/long_cnt/*
 CLAUDE*
+ai_docs/*
 
 
 run_config.json
