@@ -122,8 +122,7 @@ class NEGFHamiltonianInit(object):
 
         # sort the atoms in device region lexicographically
         if block_tridiagonal:
-            self.structase.positions[self.device_id[0]:self.device_id[1]] =\
-            self.structase.positions[self.device_id[0]:self.device_id[1]][sort_lexico(self.structase.positions[self.device_id[0]:self.device_id[1]])]
+            self.structase = self._sort_device_lexico(self.structase, self.device_id)
             log.info(msg="The structure is sorted lexicographically in this version!")
 
         if self.unit == "Hartree":
@@ -142,6 +141,41 @@ class NEGFHamiltonianInit(object):
             atom_norbs.append(int(self.model.idp.atom_norb[model.idp.chemical_symbol_to_type[atom.symbol]]))
         self.atom_norbs = atom_norbs
 
+    @staticmethod
+    def _sort_device_lexico(structase, device_id):
+        '''Lexicographically sort the atoms in the device region.
+
+        The device slice ``[device_id[0]:device_id[1]]`` is reordered using
+        ``sort_lexico`` on the atomic positions. Crucially, the whole atoms
+        slice is permuted so that the atomic species (numbers) stay attached to
+        their coordinates. Permuting only ``positions`` (as an earlier version
+        did) desyncs positions and species and corrupts the Hamiltonian for any
+        device that is not already lexicographically ordered, especially for
+        multi-species devices.
+
+        Parameters
+        ----------
+        structase : ase.Atoms
+            The full structure (leads + device).
+        device_id : list[int]
+            ``[start, end]`` atom indices delimiting the device region.
+
+        Returns
+        -------
+        ase.Atoms
+            The structure with the device region sorted; lead regions untouched.
+        '''
+        d0, d1 = device_id[0], device_id[1]
+        perm = sort_lexico(structase.positions[d0:d1])
+        # Build global index order: leads verbatim, device permuted. Indexing an
+        # Atoms object with an index array carries positions AND numbers together.
+        order = np.concatenate([
+            np.arange(d0),
+            d0 + perm,
+            np.arange(d1, len(structase)),
+        ])
+        return structase[order]
+    
     def initialize(self, kpoints, block_tridiagnal=False, plot_blocks=False, \
                    useBloch=False,bloch_factor=None,\
                    use_saved_HS=False, saved_HS_path=None):
