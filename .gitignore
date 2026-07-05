@@ -37,6 +37,7 @@ examples/hBN/negf_output_k70/self_energy/*
 examples/CNT/output/*
 examples/long_cnt/*
 CLAUDE*
+ai_docs/*
 
 
 run_config.json
