@@ -41,7 +41,7 @@ RUN \
     conda run -n dpnegf pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu && \
     # [2] Pull torch-scatter from the PyG wheel index and use --only-binary=torch-scatter to fully disable source builds.
     # If no matching wheel is found it fails immediately instead of spending ~10 minutes compiling a package that would crash at runtime.
-    conda run -n dpnegf pip install torch-scatter -f https://data.pyg.org/whl/torch-2.5.0+cpu.html --only-binary=torch-scatter && \
+    conda run -n dpnegf pip install torch-scatter -f https://data.pyg.org/whl/torch-2.5.1+cpu.html --only-binary=torch-scatter && \
     # [3] Guard the local-repo installs with the CPU index so hidden dependencies can't replace the CPU torch with a CUDA build.
     conda run -n dpnegf pip install ./DeePTB torch==2.5.1 --extra-index-url https://download.pytorch.org/whl/cpu && \
     conda run -n dpnegf pip install ./ torch==2.5.1 --extra-index-url https://download.pytorch.org/whl/cpu && \

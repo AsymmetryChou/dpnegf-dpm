@@ -176,10 +176,17 @@ def recursive_gf_cal(energy, mat_l_list, mat_d_list, mat_u_list,
         # In-place: mat_d_list is a fresh tensor (wrapper's `* 1.` copy on D),
         # so we can fuse the energy shift without the e_bcast*sd transient.
         mat_d_list[jj].addcmul_(sd[jj], e_bcast, value=-1)
+        # sd[jj] is dead after this — it's only read here in the non-uniform
+        # kernel. Drop the wrapper-side view so the addcmul_ transient slab
+        # can be coalesced by the caching allocator inside the loop instead
+        # of waiting for the wrapper's `sd_b` Python name to leave scope.
+        sd[jj] = None
     for jj in range(len(mat_l_list)):
         mat_l_list[jj] = mat_l_list[jj] - e_bcast * sl[jj]
+        sl[jj] = None
     for jj in range(len(mat_u_list)):
         mat_u_list[jj] = mat_u_list[jj] - e_bcast * su[jj]
+        su[jj] = None
 
     num_of_matrices = len(mat_d_list)
     mat_shapes = [item.shape for item in mat_d_list]  # [B, n_q, n_q]
@@ -454,6 +461,13 @@ def recursive_gf(energy, hl, hd, hu, sd, su, sl, left_se, right_se, seP=None, E_
         Sd = torch.stack(sd_b, dim=0)                 # [K,   B, n, n]
         Sl = torch.stack(sl_b, dim=0)                 # [K-1, B, n, n]
         Su = torch.stack(su_b, dim=0)                 # [K-1, B, n, n]
+        # torch.stack on the wrapper's `*1.` D copies and the L/U/sd/sl/su
+        # expanded views produces six owned 4-D tensors. The wrapper-side
+        # lists are dead from here on — drop them now so the per-slot
+        # `[B, n_q, n_q]` storage (≈ K × B × n² × 16 B for D) can be freed
+        # before the kernel allocates gr_left/grl/gru.
+        del temp_mat_d_list, temp_mat_l_list, temp_mat_u_list
+        del sd_b, sl_b, su_b
         ans = recursive_gf_cal(shift_energy, L, D, U, Sd, Su, Sl,
                                s_in=s_in_b, s_out=s_out_b, eta=eta,
                                need_lesser=need_lesser,
@@ -470,6 +484,12 @@ def recursive_gf(energy, hl, hd, hu, sd, su, sl, left_se, right_se, seP=None, E_
                                need_gr_lc=need_gr_lc,
                                stacked=False,
                                keep_gr_left=keep_gr_left)
+        # Non-uniform kernel consumed the lists by reference and nulled
+        # individual slots as it went. Drop the wrapper-side names so the
+        # Python list objects (and any straggler refs) are gone before
+        # _squeeze_ans/return.
+        temp_mat_d_list = temp_mat_l_list = temp_mat_u_list = None
+        sd_b = sl_b = su_b = None
 
     if squeezed:
         ans = _squeeze_ans(ans)
