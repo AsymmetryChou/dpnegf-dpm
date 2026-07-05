@@ -37,14 +37,14 @@ RUN \
     conda create -n dpnegf python=3.10 -c conda-forge -y && \
     git clone https://github.com/deepmodeling/DeePTB.git && \
     conda run -n dpnegf pip install --upgrade pip setuptools wheel && \
-    # [1] 强制拉取纯 CPU 版本的 PyTorch 2.1.1，极大地减小镜像体积并对齐底层接口
-    conda run -n dpnegf pip install torch==2.1.1 --index-url https://download.pytorch.org/whl/cpu && \
+    # [1] 强制拉取纯 CPU 版本的 PyTorch 2.5.1，极大地减小镜像体积并对齐底层接口
+    conda run -n dpnegf pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu && \
     # [2] 强制使用 PyG 专属源拉取 torch-scatter，并使用 --only-binary=torch-scatter 彻底关闭源码编译。
     # 这样如果找不到精确匹配的 Wheel，它会立刻报错，而不是花 10 分钟编译出一个会引发崩溃的包。
-    conda run -n dpnegf pip install torch-scatter -f https://data.pyg.org/whl/torch-2.1.1+cpu.html --only-binary=torch-scatter && \
+    conda run -n dpnegf pip install torch-scatter -f https://data.pyg.org/whl/torch-2.5.0+cpu.html --only-binary=torch-scatter && \
     # [3] 给本地仓库的安装加上 CPU 源保护，防止安装过程触发隐藏依赖，把刚才装好的 CPU 版 Torch 顶替成带 CUDA 的版本
-    conda run -n dpnegf pip install ./DeePTB torch==2.1.1 --extra-index-url https://download.pytorch.org/whl/cpu && \
-    conda run -n dpnegf pip install ./ torch==2.1.1 --extra-index-url https://download.pytorch.org/whl/cpu && \
+    conda run -n dpnegf pip install ./DeePTB torch==2.5.1 --extra-index-url https://download.pytorch.org/whl/cpu && \
+    conda run -n dpnegf pip install ./ torch==2.5.1 --extra-index-url https://download.pytorch.org/whl/cpu && \
     conda clean --all -y && \
     rm -rf /root/.cache/pip
 
