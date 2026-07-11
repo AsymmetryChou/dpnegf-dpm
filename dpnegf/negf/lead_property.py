@@ -523,7 +523,8 @@ def _estimate_worker_memory(lead_L, lead_R, kpoint=None, temp_allocation_factor=
     return total_estimate
 
 
-def _get_safe_n_jobs(lead_L, lead_R, requested_n_jobs=-1, max_memory_fraction=0.9, min_workers=1, kpoint=None, n_cpus=None):
+def _get_safe_n_jobs(lead_L, lead_R, requested_n_jobs=-1, max_memory_fraction=0.9, 
+                     min_workers=1, kpoint=None, n_cpus=None):
     """
     Calculate safe number of parallel workers based on available system memory.
 
@@ -539,6 +540,8 @@ def _get_safe_n_jobs(lead_L, lead_R, requested_n_jobs=-1, max_memory_fraction=0.
         Minimum number of workers to use. Default 1.
     kpoint : array-like, optional
         A sample k-point for fetching Hamiltonian matrices to estimate memory.
+    n_cpus : int or None
+        Number of CPU cores to use for memory estimation. If None, uses os.cpu_count().
 
     Returns
     -------
@@ -721,8 +724,8 @@ def _sample_principal_layer_dim(pack, sample_kpoint):
 
 
 def compute_all_self_energy(eta, lead_L, lead_R, kpoints_grid, energy_grid,
-                            self_energy_save_path=None, n_jobs=-1, batch_size=200,
-                            n_cpus=None, se_numba_jit=None, blas_threads=None):
+                            self_energy_save_path=None, ek_batch_size=200,
+                            n_cpus=None, n_jobs=-1, se_numba_jit=None, blas_threads=None):
     """
     Computes and saves self-energy matrices for all combinations of k-points and energy values
     for left and right leads.
@@ -744,20 +747,19 @@ def compute_all_self_energy(eta, lead_L, lead_R, kpoints_grid, energy_grid,
         List or array of energy values to compute self-energy for.
     self_energy_save_path : str or None, optional
         Directory to save self-energy files. If None, uses lead_L's results_path.
-    n_jobs : int, optional
-        Number of parallel jobs to use. Default is -1 (use all available CPUs).
-    batch_size : int, optional
+    ek_batch_size : int, optional
         Number of (k, e) tasks per parallel batch. Default is 200.
     n_cpus : int or None, optional
         Number of CPU cores to use for memory estimation. If None, uses os.cpu_count().
+    n_jobs : int, optional
+        Number of parallel jobs to use. Default is -1 (use all available CPUs).
     se_numba_jit : bool or None, optional
         Boolean flag controlling whether to use the Numba-accelerated surface Green's function core.
         If None, Numba will be used when available. Default is None.
     blas_threads : int or None, optional
         BLAS threads to give each worker. None (default) autotunes by timing
-        `_compute_self_energy_from_pack` at the sample (k, E) across a few
-        candidate thread counts and picking the fastest. Pass an int to force
-        that value; it is still clamped to `cpu_count // n_jobs` to avoid
+        `_compute_self_energy_from_pack` across a few candidate thread counts and picking the fastest. 
+        Pass an int to force that value; it is still clamped to `cpu_count // n_jobs` to avoid
         oversubscription.
 
     Returns
@@ -774,7 +776,10 @@ def compute_all_self_energy(eta, lead_L, lead_R, kpoints_grid, energy_grid,
     # Calculate safe number of workers based on available memory
     # Use first k-point for memory estimation
     sample_kpoint = kpoints_grid[0] if len(kpoints_grid) > 0 else None
-    safe_n_jobs = _get_safe_n_jobs(lead_L, lead_R, requested_n_jobs=n_jobs, kpoint=sample_kpoint, n_cpus=n_cpus)
+    safe_n_jobs = _get_safe_n_jobs(lead_L, lead_R, 
+                                   requested_n_jobs=n_jobs, 
+                                   kpoint=sample_kpoint, 
+                                   n_cpus=n_cpus)
     if n_jobs == -1:
         log.info(f"Auto-detected safe n_jobs={safe_n_jobs} based on available memory")
     elif safe_n_jobs < n_jobs:
@@ -800,7 +805,7 @@ def compute_all_self_energy(eta, lead_L, lead_R, kpoints_grid, energy_grid,
     # Capture the parent's log level so loky workers (which start with a clean
     # logging state and the WARNING default) can match it when they reinit.
     parent_log_level = logging.getLogger().getEffectiveLevel()
-    if len(total_tasks) <= batch_size:
+    if len(total_tasks) <= ek_batch_size:
         Parallel(n_jobs=safe_n_jobs, backend="loky")(
             delayed(_self_energy_worker_blas)(k, e, eta, leadL_pack, leadR_pack,
                                                self_energy_save_path, se_numba_jit,
@@ -808,8 +813,8 @@ def compute_all_self_energy(eta, lead_L, lead_R, kpoints_grid, energy_grid,
             for k, e in total_tasks
         )
     else:
-        for i in range(0, len(total_tasks), batch_size):
-            batch = total_tasks[i:i+batch_size]
+        for i in range(0, len(total_tasks), ek_batch_size):
+            batch = total_tasks[i:i+ek_batch_size]
             Parallel(n_jobs=safe_n_jobs, backend="loky")(
                 delayed(_self_energy_worker_blas)(k, e, eta, leadL_pack, leadR_pack,
                                                    self_energy_save_path, se_numba_jit,
