@@ -593,7 +593,130 @@ def _get_safe_n_jobs(lead_L, lead_R, requested_n_jobs=-1, max_memory_fraction=0.
 
     log.info(f"Estimated safe n_jobs={safe_n_worker} based on available memory.")
     return safe_n_worker
-        
+
+
+def _autotune_blas_threads(leadL_pack, sample_kpoint, sample_energy, eta_lead,
+                            n_jobs, cpu_count, se_numba_jit, requested=None):
+    """Pick per-worker BLAS threads by timing the real surface-green code path.
+
+    The Lopez-Sancho loop in ``surface_green._surface_green_{numba,scipy}_core``
+    (surface_green.py) issues repeated complex128 ``solve`` on shape ``(N, 2N)``
+    and several ``(N, N)`` matmuls per iteration. The payoff from BLAS threading
+    is hardware-dependent (OpenBLAS vs MKL, cache size, N), so instead of a
+    static table we probe the actual `_compute_self_energy_from_pack` at a few
+    candidate thread counts and keep the fastest. Runs once per
+    ``compute_all_self_energy`` call, in the parent process, before workers fan
+    out. Cost is bounded to ``2 * len(candidates)`` surface-green calls at the
+    sample ``(k, E)``.
+
+    Parameters
+    ----------
+    leadL_pack : dict
+        Precomputed lead pack (see `_precompute_lead_kdata`). Only the left
+        lead is timed; the right lead has the same principal-layer size in
+        normal use, so measuring one halves the probe cost.
+    sample_kpoint, sample_energy : array-like, float
+        The (k, E) pair used for the probe. Take from the grid actually being
+        computed so N and dtype match production.
+    eta_lead : float
+        Same broadening as production.
+    n_jobs : int
+        Number of joblib workers about to be launched; bounds per-worker CPU.
+    cpu_count : int
+        Total CPU budget.
+    se_numba_jit : bool or None
+        Same flag workers will see. The first call absorbs numba JIT compile;
+        the timed second call measures steady-state.
+    requested : int or None
+        User override. When a positive int, skip the bench and clamp to the
+        per-worker budget.
+
+    Returns
+    -------
+    int
+        BLAS threads to give each loky worker via ``threadpool_limits``.
+    """
+    n_jobs = max(int(n_jobs), 1)
+    per_worker_budget = max(int(cpu_count) // n_jobs, 1)
+
+    if requested is not None:
+        if not isinstance(requested, int) or requested < 1:
+            log.warning(f"Requested blas_threads={requested} is not a positive int. "
+                        "Falling back to autotune.")
+        else:
+            if requested > per_worker_budget:
+                log.warning(f"Requested blas_threads={requested} exceeds per-worker "
+                            f"CPU budget ({per_worker_budget} = cpu_count // n_jobs). "
+                            f"Clamping to {per_worker_budget}.")
+            threads = min(requested, per_worker_budget)
+            log.info(f"BLAS threads per worker: {threads} (user-requested).")
+            return threads
+
+    if per_worker_budget == 1:
+        log.info("BLAS threads per worker: 1 (no CPU budget left for BLAS threading).")
+        return 1
+
+    if sample_kpoint is None or not leadL_pack.get("kdata"):
+        log.info("BLAS threads per worker: 1 (empty sample; skipping autotune).")
+        return 1
+
+    sample_dim = _sample_principal_layer_dim(leadL_pack, sample_kpoint)
+    if sample_dim < 64:
+        log.info(f"BLAS threads per worker: 1 (N={sample_dim} < 64; skipping autotune).")
+        return 1
+
+    candidates = sorted({1, 2, 4, 8, per_worker_budget})
+    candidates = [c for c in candidates if c <= per_worker_budget]
+
+    timings = {}
+    for t in candidates:
+        try:
+            with threadpool_limits(limits=t, user_api='blas'):
+                _compute_self_energy_from_pack(
+                    leadL_pack, sample_kpoint, sample_energy,
+                    eta_lead, se_numba_jit=se_numba_jit,
+                )
+                start = time.perf_counter()
+                _compute_self_energy_from_pack(
+                    leadL_pack, sample_kpoint, sample_energy,
+                    eta_lead, se_numba_jit=se_numba_jit,
+                )
+                elapsed = time.perf_counter() - start
+        except Exception as e:
+            log.warning(f"BLAS autotune t={t} failed ({e!r}); skipping candidate.")
+            continue
+        timings[t] = elapsed
+        log.info(f"BLAS autotune t={t}: {elapsed * 1e3:.1f} ms")
+
+    if not timings:
+        log.warning("BLAS autotune found no working candidate; falling back to 1.")
+        return 1
+
+    best = min(timings, key=timings.get)
+    log.info(f"BLAS threads per worker: {best} "
+             f"(autotuned, N={sample_dim}, n_jobs={n_jobs}, cpu_count={cpu_count}).")
+    return best
+
+
+def _sample_principal_layer_dim(pack, sample_kpoint):
+    """Return the principal-layer Hamiltonian dimension N from a precomputed
+    lead pack, handling both non-Bloch and Bloch branches. Returns 0 if the
+    sample entry cannot be located, letting callers fall back to a safe
+    default."""
+    if sample_kpoint is None:
+        return 0
+    try:
+        entry = pack["kdata"][_k_key(sample_kpoint)]
+    except (KeyError, TypeError):
+        return 0
+    if "HLk" in entry:
+        HLk = entry["HLk"]
+    else:
+        bloch_entries = entry.get("bloch_entries") or []
+        if not bloch_entries:
+            return 0
+        HLk = bloch_entries[0]["HLk"]
+    return int(HLk.shape[0])
 
 
 def compute_all_self_energy(eta, lead_L, lead_R, kpoints_grid, energy_grid,
