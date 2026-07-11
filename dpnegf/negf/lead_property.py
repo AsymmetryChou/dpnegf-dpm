@@ -672,8 +672,17 @@ def _autotune_blas_threads(leadL_pack, sample_kpoint, sample_energy, eta_lead,
     candidates = sorted({1, 2, 4, 8, per_worker_budget})
     candidates = [c for c in candidates if c <= per_worker_budget]
 
+    # Wall-clock cap for the whole probe. stop between
+    # candidates (not mid-call) and pick the best-so-far.
+    max_autotune_seconds = 90.0
+    bench_start = time.perf_counter()
+
     timings = {}
     for t in candidates:
+        if time.perf_counter() - bench_start > max_autotune_seconds:
+            log.warning(f"BLAS autotune exceeded {max_autotune_seconds:.0f}s wall-clock cap; "
+                        f"stopping after {len(timings)}/{len(candidates)} candidates.")
+            break
         try:
             with threadpool_limits(limits=t, user_api='blas'):
                 _compute_self_energy_from_pack(
