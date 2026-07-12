@@ -35,29 +35,30 @@ def common_options():
 
 
 def tbtrans_negf():
-    doc_scf = ""
-    doc_block_tridiagonal = ""
-    doc_ele_T = ""
-    doc_unit = ""
-    doc_scf_options = ""
-    doc_stru_options = ""
-    doc_poisson_options = ""
-    doc_sgf_solver = ""
-    doc_espacing = ""
-    doc_emin = ""
-    doc_emax = ""
-    doc_e_fermi = ""
-    doc_eta_lead = ""
-    doc_eta_device = ""
-    doc_out_dos = ""
-    doc_out_tc = ""
-    doc_out_current = ""
-    doc_out_current_nscf = ""
-    doc_out_ldos = ""
-    doc_out_density = ""
-    doc_out_lcurrent = ""
-    doc_density_options = ""
-    doc_out_potential = ""
+    doc_scf = "Whether to run a self-consistent (Poisson-NEGF) loop. Default: False (non-self-consistent transport)."
+    doc_block_tridiagonal = ("Whether to block-tridiagonalize the device Hamiltonian for "
+                             "faster recursive Green's function inversion. Default: False.")
+    doc_ele_T = "Electronic temperature in Kelvin. Required."
+    doc_unit = "Energy unit used for the energy grid and outputs. Choose 'Hartree' (default) or 'eV'."
+    doc_scf_options = "SCF mixing options (only used when `scf` is true)."
+    doc_stru_options = "Structure partition and k-mesh options: device region, left/right leads, PBC, k-mesh."
+    doc_poisson_options = "Poisson solver options (only used when `scf` is true)."
+    doc_sgf_solver = "Surface Green's function solver. 'Sancho-Rubio' (default) or 'Lopez-Sancho'."
+    doc_espacing = "Energy grid spacing in `unit`. Required."
+    doc_emin = "Lower bound of the energy grid in `unit`. Required."
+    doc_emax = "Upper bound of the energy grid in `unit`. Required."
+    doc_e_fermi = "Device Fermi level in `unit`. Required."
+    doc_eta_lead = "Small imaginary broadening added to the lead energy. Default: 1e-5."
+    doc_eta_device = "Small imaginary broadening added to the device energy. Default: 0."
+    doc_out_dos = "Whether to write density of states. Default: False."
+    doc_out_tc = "Whether to write transmission coefficient. Default: False."
+    doc_out_current = "Whether to write self-consistent current. Default: False."
+    doc_out_current_nscf = "Whether to write non-self-consistent current. Default: False."
+    doc_out_ldos = "Whether to write local density of states. Default: False."
+    doc_out_density = "Whether to write electron density. Default: False."
+    doc_out_lcurrent = "Whether to write local current. Default: False."
+    doc_density_options = "Density integration options (Ozaki or Fiori method)."
+    doc_out_potential = "Whether to write the self-consistent electrostatic potential. Default: False."
 
     return [
         Argument("scf", bool, optional=True, default=False, doc=doc_scf),
@@ -89,19 +90,21 @@ def tbtrans_negf():
 
 
 def negf():
-    doc_scf = ""
-    doc_block_tridiagonal = ""
-    doc_ele_T = ""
-    doc_unit = ""
-    doc_scf_options = ""
-    doc_stru_options = ""
-    doc_poisson_options = ""
-    doc_espacing = ""
-    doc_emin = ""
-    doc_emax = ""
-    doc_e_fermi = ""
-    doc_eta_lead = ""
-    doc_eta_device = ""
+    doc_scf = "Whether to run a self-consistent (Poisson-NEGF) loop. Default: False (non-self-consistent transport)."
+    doc_block_tridiagonal = ("Whether to block-tridiagonalize the device Hamiltonian for "
+                             "faster recursive Green's function inversion. Default: False.")
+    doc_ele_T = "Electronic temperature in Kelvin. Required."
+    doc_unit = "Energy unit used for the energy grid and outputs. Choose 'Hartree' (default) or 'eV'."
+    doc_scf_options = "SCF mixing options (only used when `scf` is true)."
+    doc_stru_options = "Structure partition and k-mesh options: device region, left/right leads, PBC, k-mesh."
+    doc_poisson_options = "Poisson solver options (only used when `scf` is true)."
+    doc_espacing = "Energy grid spacing in `unit`. Required."
+    doc_emin = "Lower bound of the energy grid in `unit`. Required."
+    doc_emax = "Upper bound of the energy grid in `unit`. Required."
+    doc_e_fermi = ("Device Fermi level in `unit`. Optional; if None, computed from the "
+                   "lead Fermi level and applied to the device.")
+    doc_eta_lead = "Small imaginary broadening added to the lead energy. Default: 1e-5."
+    doc_eta_device = "Small imaginary broadening added to the device energy. Default: 0."
 
     doc_self_energy_options = ("Self-energy stage options: SGF solver, numba JIT, "
                                "on-disk cache, and CPU parallelism (joblib workers, "
@@ -220,16 +223,17 @@ def hs_cache_options():
     ]
 
 def stru_options():
-    doc_kmesh = ""
-    doc_pbc = ""
-    doc_device = ""
-    doc_lead_L = ""
-    doc_lead_R = ""
-    doc_gamma_center=""
-    doc_time_reversal_symmetry=""
-    doc_e_fermi_smearing="The smearing method for Fermi level."
-    doc_eig_solver="The eigenvalue solver to use."
-    doc_nel_atom = "The number of electrons in each element."
+    doc_kmesh = "K-mesh used for the device transverse Brillouin-zone sampling, [nkx, nky, nkz]. Default: [1, 1, 1]."
+    doc_pbc = ("Periodic boundary condition applied to the device, list of three booleans "
+               "for x/y/z. Default: [False, False, False].")
+    doc_device = "Device region: atom index range and sorting."
+    doc_lead_L = "Left lead: atom index range, voltage, k-mesh for lead Fermi-level, Bloch expansion."
+    doc_lead_R = "Right lead: atom index range, voltage, k-mesh for lead Fermi-level, Bloch expansion."
+    doc_gamma_center = "Whether the k-mesh is Gamma-centered. Default: True."
+    doc_time_reversal_symmetry = "Whether to enforce time-reversal symmetry when folding the k-mesh. Default: True."
+    doc_e_fermi_smearing = "Smearing method for lead Fermi-level determination. Default: 'FD' (Fermi-Dirac)."
+    doc_eig_solver = "Eigenvalue solver used for lead Fermi-level calculation. Default: 'torch'."
+    doc_nel_atom = "Number of valence electrons per element, e.g. {'C': 4}. Required for SCF or when computing lead Fermi-level."
     return [
         Argument("device", dict, optional=False, sub_fields=device(), doc=doc_device),
         Argument("lead_L", dict, optional=False, sub_fields=lead(), doc=doc_lead_L),
@@ -244,8 +248,8 @@ def stru_options():
     ]
 
 def device():
-    doc_id=""
-    doc_sort=""
+    doc_id = "Atom index range of the device region, e.g. '32-64' (0-indexed, half-open)."
+    doc_sort = "Whether to sort atoms in the device region along the transport axis. Default: True."
 
     return [
         Argument("id", str, optional=False, doc=doc_id),
@@ -253,12 +257,12 @@ def device():
     ]
 
 def lead():
-    doc_id=""
-    doc_voltage=""
-    doc_useBloch=""
-    doc_bloch_factor=""
-    doc_kmesh_lead_Ef = "The kmesh for lead Fermi level calculation."
-    doc_charge = "The charge of the doped lead, used for Fermi level calculation."
+    doc_id = "Atom index range of the lead region, e.g. '0-32' (0-indexed, half-open)."
+    doc_voltage = "Applied bias voltage on this lead, in `unit`. Required."
+    doc_useBloch = "Whether to use Bloch expansion to reduce lead unit cell size. Default: False."
+    doc_bloch_factor = "Bloch factor [nx, ny, nz] for the lead unit cell. Default: [1, 1, 1]."
+    doc_kmesh_lead_Ef = "K-mesh used to compute the lead Fermi level, [nkx, nky, nkz]."
+    doc_charge = "Doping charge on the lead, used when computing the lead Fermi level. Default: 0.0."
     return [
         Argument("id", str, optional=False, doc=doc_id),
         Argument("voltage", [int, float], optional=False, doc=doc_voltage),
@@ -269,20 +273,20 @@ def lead():
     ]
 
 def scf_options():
-    doc_mode = ""
-    doc_PDIIS = ""
+    doc_mode = "SCF mixing algorithm. Currently only 'PDIIS' is supported."
+    doc_PDIIS = "PDIIS (Periodic-DIIS) mixing parameters."
 
     return Variant("mode", [
         Argument("PDIIS", dict, PDIIS(), doc=doc_PDIIS)
         ], optional=True, default_tag="PDIIS", doc=doc_mode)
 
 def PDIIS():
-    doc_mixing_period = ""
-    doc_step_size = ""
-    doc_n_history = ""
-    doc_abs_err = ""
-    doc_rel_err = ""
-    doc_max_iter = ""
+    doc_mixing_period = "How many iterations between DIIS extrapolations. Default: 3."
+    doc_step_size = "Linear mixing step size between DIIS steps. Default: 0.05."
+    doc_n_history = "Number of previous residuals kept for the DIIS subspace. Default: 6."
+    doc_abs_err = "Absolute convergence tolerance on the SCF residual. Default: 1e-6."
+    doc_rel_err = "Relative convergence tolerance on the SCF residual. Default: 1e-4."
+    doc_max_iter = "Maximum SCF iterations. Default: 100."
 
     return [
         Argument("mixing_period", int, optional=True, default=3, doc=doc_mixing_period),
@@ -294,10 +298,12 @@ def PDIIS():
     ]
 
 def poisson_options():
-    doc_solver = ""
-    doc_fmm = ""
-    doc_pyamg= ""
-    doc_scipy= ""
+    doc_solver = ("Poisson solver backend. 'fmm' (default) uses the free-space Fast Multipole "
+                  "Method; 'pyamg' uses an algebraic-multigrid finite-difference solver on a "
+                  "grid; 'scipy' uses SciPy's sparse linear algebra on a grid.")
+    doc_fmm = "FMM solver options."
+    doc_pyamg = "pyamg (algebraic multigrid) solver options: grid, gates, dielectric and doped regions."
+    doc_scipy = "SciPy sparse solver options: grid, gates, dielectric and doped regions."
     return Variant("solver", [
         Argument("fmm", dict, fmm(), doc=doc_fmm),
         Argument("pyamg", dict, pyamg(), doc=doc_pyamg),
@@ -305,18 +311,20 @@ def poisson_options():
     ], optional=True, default_tag="fmm", doc=doc_solver)
 
 def density_options():
-    doc_method = ""
-    doc_Ozaki = ""
-    doc_Fiori = ""
+    doc_method = ("Density integration method. 'Ozaki' (default) uses the Ozaki contour with "
+                  "Matsubara-pole expansion; 'Fiori' uses real-axis integration with Gauss "
+                  "quadrature (used with the Fiori/effective-mass approach).")
+    doc_Ozaki = "Ozaki-contour options."
+    doc_Fiori = "Fiori real-axis integration options."
     return Variant("method", [
         Argument("Ozaki", dict, Ozaki(), doc=doc_Ozaki),
         Argument("Fiori", dict, Fiori(), doc=doc_Fiori)
     ], optional=True, default_tag="Ozaki", doc=doc_method)
 
 def Ozaki():
-    doc_M_cut = ""
-    doc_R = ""
-    doc_n_gauss = ""
+    doc_M_cut = "Number of Ozaki poles kept. Default: 30."
+    doc_R = "Radius of the semicircular contour in `unit`. Default: 1e6."
+    doc_n_gauss = "Number of Gauss-Legendre points on the equilibrium contour. Default: 10."
     return [
         Argument("R", [int, float], optional=True, default=1e6, doc=doc_R),
         Argument("M_cut", int, optional=True, default=30, doc=doc_M_cut),
@@ -324,30 +332,31 @@ def Ozaki():
     ]
 
 def Fiori():
-    doc_n_gauss = ""
-    doc_integrate_way=""
+    doc_n_gauss = "Number of Gauss quadrature points along the real-axis integration. Default: 100."
+    doc_integrate_way = "Integration strategy for the Fiori method: 'direct' or 'gauss'. Default: 'direct'."
     return [
         Argument("integrate_way", int, optional=True, default='direct', doc=doc_integrate_way),
         Argument("n_gauss", int, optional=True, default=100, doc=doc_n_gauss)
     ]
 
 def fmm():
-    doc_err = ""
+    doc_err = "Requested FMM accuracy on the Coulomb sum. Default: 1e-5."
 
     return [
         Argument("err", [int, float], optional=True, default=1e-5, doc=doc_err)
     ]
 
 def pyamg():
-    doc_err = ""
-    doc_tolerance=""
-    doc_grid=""
-    doc_gate=""
-    doc_dielectric=""
-    doc_doped=""
-    doc_max_iter=""
-    doc_mix_rate=""
-    doc_poisson_dtype="The dtype of the poisson solver"
+    doc_err = "Error target passed to the AMG solver. Default: 1e-5."
+    doc_tolerance = "Convergence tolerance of the AMG linear solve. Default: 1e-7."
+    doc_grid = "Real-space grid used to discretize the Poisson equation."
+    doc_gate = "Dirichlet boundary condition for a metallic gate (x/y/z range and applied voltage)."
+    doc_dielectric = ("Rectangular region with a fixed relative permittivity. Additional regions "
+                       "can be added via `dielectric_region2` ... `dielectric_region6`.")
+    doc_doped = "Rectangular region with a fixed doping charge density."
+    doc_max_iter = "Maximum AMG iterations. Default: 100."
+    doc_mix_rate = "Underrelaxation between successive Poisson solves. Default: 0.25."
+    doc_poisson_dtype = "Floating precision of the Poisson solver ('float32' or 'float64'). Default: 'float64'."
     return [
         Argument("err", [int, float], optional=True, default=1e-5, doc=doc_err),
         Argument("tolerance", [int, float], optional=True, default=1e-7, doc=doc_tolerance),
@@ -368,15 +377,16 @@ def pyamg():
     ]
 
 def scipy():
-    doc_err = ""
-    doc_tolerance=""
-    doc_grid=""
-    doc_gate=""
-    doc_dielectric=""
-    doc_doped=""
-    doc_max_iter=""
-    doc_mix_rate=""
-    doc_poisson_dtype="The dtype of the poisson solver"
+    doc_err = "Residual threshold on the potential update. Default: 1e-5."
+    doc_tolerance = "Convergence tolerance of the sparse linear solve. Default: 1e-7."
+    doc_grid = "Real-space grid used to discretize the Poisson equation."
+    doc_gate = "Dirichlet boundary condition for a metallic gate (x/y/z range and applied voltage)."
+    doc_dielectric = ("Rectangular region with a fixed relative permittivity. Additional regions "
+                       "can be added via `dielectric_region2` ... `dielectric_region6`.")
+    doc_doped = "Rectangular region with a fixed doping charge density."
+    doc_max_iter = "Maximum Poisson iterations. Default: 100."
+    doc_mix_rate = "Underrelaxation between successive Poisson solves. Default: 0.25."
+    doc_poisson_dtype = "Floating precision of the Poisson solver ('float32' or 'float64'). Default: 'float64'."
     return [
         Argument("err", [int, float], optional=True, default=1e-5, doc=doc_err),
         Argument("tolerance", [int, float], optional=True, default=1e-7, doc=doc_tolerance),
@@ -401,9 +411,9 @@ def scipy():
     ]
 
 def grid():
-    doc_xrange=""
-    doc_yrange=""
-    doc_zrange=""
+    doc_xrange = "Grid range along x as 'start:stop:n' (Angstrom, n points)."
+    doc_yrange = "Grid range along y as 'start:stop:n' (Angstrom, n points)."
+    doc_zrange = "Grid range along z as 'start:stop:n' (Angstrom, n points)."
     return [
         Argument("x_range", str, optional=False, doc=doc_xrange),
         Argument("y_range", str, optional=False, doc=doc_yrange),
@@ -411,10 +421,10 @@ def grid():
     ]
 
 def Dirichlet_BC():
-    doc_xrange=""
-    doc_yrange=""
-    doc_zrange=""
-    doc_voltage=""
+    doc_xrange = "Range along x as 'x0:x1' (Angstrom)."
+    doc_yrange = "Range along y as 'y0:y1' (Angstrom)."
+    doc_zrange = "Range along z as 'z0:z1' (Angstrom)."
+    doc_voltage = "Applied voltage on this Dirichlet boundary in `unit`. Default: None."
     return [
         Argument("x_range", str, optional=False, doc=doc_xrange),
         Argument("y_range", str, optional=False, doc=doc_yrange),
@@ -423,10 +433,10 @@ def Dirichlet_BC():
     ]
 
 def dielectric():
-    doc_xrange=""
-    doc_yrange=""
-    doc_zrange=""
-    doc_permittivity=""
+    doc_xrange = "Range along x as 'x0:x1' (Angstrom)."
+    doc_yrange = "Range along y as 'y0:y1' (Angstrom)."
+    doc_zrange = "Range along z as 'z0:z1' (Angstrom)."
+    doc_permittivity = "Relative permittivity of the region."
     return [
         Argument("x_range", str, optional=False, doc=doc_xrange),
         Argument("y_range", str, optional=False, doc=doc_yrange),
@@ -435,10 +445,10 @@ def dielectric():
     ]
 
 def doped():
-    doc_xrange=""
-    doc_yrange=""
-    doc_zrange=""
-    doc_charge=""
+    doc_xrange = "Range along x as 'x0:x1' (Angstrom)."
+    doc_yrange = "Range along y as 'y0:y1' (Angstrom)."
+    doc_zrange = "Range along z as 'z0:z1' (Angstrom)."
+    doc_charge = "Fixed doping charge (electrons per unit cell of the region)."
     return [
         Argument("x_range", str, optional=False, doc=doc_xrange),
         Argument("y_range", str, optional=False, doc=doc_yrange),
@@ -447,22 +457,16 @@ def doped():
     ]
 
 def run_options():
-    doc_task = "the task to run"
-    doc_structure = "the structure to run the task"
-    doc_gui = "To use the GUI or not"
-    doc_device = "The device to run the calculation, choose among `cpu` and `cuda[:int]`, Default: None. default None means to use the device seeting in the model ckpt file."
-    doc_dtype = """The digital number's precison, choose among:
-                    Default: None,
-                        - `float32`: indicating torch.float32
-                        - `float64`: indicating torch.float64
-                    default None means to use the device seeting in the model ckpt file.
-                """
-    doc_pbc = """The periodic boundary condition, choose among:
-                    Default: True,
-                        - True: indicating the structure is periodic
-                        - False: indicating the structure is not periodic
-                        - list of bool: indicating the structure is periodic in x,y,z direction respectively.
-                """
+    doc_task = "Which transport task to run and its detailed options. See `task_options` below."
+    doc_structure = "Path to the structure file (xyz/vasp/etc.). Overrides the CLI `--structure` flag when set."
+    doc_gui = "Whether to launch the GUI. Default: False."
+    doc_device = ("The torch device used to build the Hamiltonian and run the calculation. "
+                  "Choose 'cpu' or 'cuda[:int]'. Default: None (use the device stored in the model ckpt).")
+    doc_dtype = ("Floating precision used at build time. 'float32' or 'float64'. "
+                  "Default: None (use the dtype stored in the model ckpt).")
+    doc_pbc = ("Overall periodic boundary condition of the input structure. "
+                 "Bool applies to all three axes; a list of three bools sets x/y/z individually. "
+                 "Default: None (inferred from the structure file).")
 
     args = [
         Argument("task_options", dict, sub_fields=[], optional=True, sub_variants=[task_options()], doc = doc_task),
@@ -574,10 +578,10 @@ def task_options():
 
 
 def AtomicData_options_sub():
-    doc_r_max = "the cutoff value for bond considering in TB model."
-    doc_er_max = "The cutoff value for environment for each site for env correction model. should set for nnsk+env correction model."
-    doc_oer_max = "The cutoff value for onsite environment for nnsk model, for now only need to set in strain and NRL mode."
-    doc_pbc = "The periodic condition for the structure, can bool or list of bool to specific x,y,z direction."
+    doc_r_max = "Cutoff radius (Angstrom) for bond construction in the TB model. Can be a float or a per-species dict."
+    doc_er_max = "Cutoff radius for the environment of each site (env-correction models). Default: None."
+    doc_oer_max = "Cutoff radius for onsite environment; only used by nnsk models in strain or NRL mode. Default: None."
+    doc_pbc = "Periodic boundary condition, bool or list of three bools for x/y/z."
 
     args = [
         Argument("r_max", [float, int, dict], optional=False, doc=doc_r_max, default=4.0),
