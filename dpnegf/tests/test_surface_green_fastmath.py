@@ -76,19 +76,19 @@ def _time_core(core, args, n_calls):
     return (time.perf_counter() - t0) / n_calls
 
 
-@pytest.mark.parametrize("N,n_calls", [(256, 5), (512, 3)])
-def test_fastmath_speedup(N, n_calls, capsys):
-    """Not asserted — just prints so ``pytest -s`` shows the speedup."""
-    H, h01, S, s01, h10, s10 = _make_lead_problem(N, seed=42)
-    ee = np.complex128(0.25 + 1e-5j)
-    args = (H, h01, S, s01, h10, s10, ee)
+# @pytest.mark.parametrize("N,n_calls", [(256, 5), (512, 3)])
+# def test_fastmath_speedup(N, n_calls, capsys):
+#     """Not asserted — just prints so ``pytest -s`` shows the speedup."""
+#     H, h01, S, s01, h10, s10 = _make_lead_problem(N, seed=42)
+#     ee = np.complex128(0.25 + 1e-5j)
+#     args = (H, h01, S, s01, h10, s10, ee)
 
-    t_fast = _time_core(_surface_green_numba_core, args, n_calls)
-    t_slow = _time_core(_surface_green_numba_core_nofastmath, args, n_calls)
+#     t_fast = _time_core(_surface_green_numba_core, args, n_calls)
+#     t_slow = _time_core(_surface_green_numba_core_nofastmath, args, n_calls)
 
-    with capsys.disabled():
-        print(
-            f"\n[N={N:4d}] fastmath={t_fast * 1e3:7.1f} ms  "
-            f"nofastmath={t_slow * 1e3:7.1f} ms  "
-            f"speedup={t_slow / t_fast:.2f}x"
-        )
+#     with capsys.disabled():
+#         print(
+#             f"\n[N={N:4d}] fastmath={t_fast * 1e3:7.1f} ms  "
+#             f"nofastmath={t_slow * 1e3:7.1f} ms  "
+#             f"speedup={t_slow / t_fast:.2f}x"
+#         )
