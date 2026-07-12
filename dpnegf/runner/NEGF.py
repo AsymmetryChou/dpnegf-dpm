@@ -79,7 +79,7 @@ class NEGF(object):
         self.use_saved_se = se_cache.get("use_saved", False)
         self.self_energy_save_path = se_cache.get("save_path", None)
         se_parallel = dict(se_opts.get("parallel", {}) or {})
-        self.n_cpus = se_parallel.get("cpu_budget", None)
+        self.cpu_budget = se_parallel.get("cpu_budget", None)
         self.n_workers = se_parallel.get("n_workers", -1)
         self.blas_threads = se_parallel.get("blas_threads", None)
         self.ek_batch_size = se_parallel.get("ek_batch_size", 200)
@@ -602,7 +602,7 @@ class NEGF(object):
                 compute_all_self_energy(self.eta_lead, self.deviceprop.lead_L, self.deviceprop.lead_R,
                                         self.kpoints, self.density.integrate_range, self.self_energy_save_path,
                                         ek_batch_size=self.ek_batch_size,
-                                        n_cpus=self.n_cpus, n_jobs=self.n_workers,
+                                        cpu_budget=self.cpu_budget, n_workers=self.n_workers,
                                         se_numba_jit=self.se_numba_jit,
                                         blas_threads=self.blas_threads)
             elif not self.scf:
@@ -610,7 +610,7 @@ class NEGF(object):
                 compute_all_self_energy(self.eta_lead, self.deviceprop.lead_L, self.deviceprop.lead_R,
                                         self.kpoints, self.uni_grid, self.self_energy_save_path,
                                         ek_batch_size=self.ek_batch_size,
-                                        n_cpus=self.n_cpus, n_jobs=self.n_workers,
+                                        cpu_budget=self.cpu_budget, n_workers=self.n_workers,
                                         se_numba_jit=self.se_numba_jit,
                                         blas_threads=self.blas_threads)
         log.info(msg="-----------------------------------\n")

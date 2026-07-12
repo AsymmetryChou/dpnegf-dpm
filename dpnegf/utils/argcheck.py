@@ -165,7 +165,7 @@ def self_energy_cache_options():
 def self_energy_parallel_options():
     doc_n_workers = ("Number of joblib workers used to parallelize the self-energy "
                      "sweep over (k, E). -1 (default) auto-selects based on the CPU "
-                     "and memory budget (see `_get_safe_n_jobs`).")
+                     "and memory budget (see `_get_safe_n_workers`).")
     doc_cpu_budget = ("Total CPU cores the self-energy pool is allowed to size against. "
                       "None (default) uses os.cpu_count(). This bounds both `n_workers` "
                       "and `blas_threads` so BLAS-thread * worker <= cpu_budget.")
