@@ -888,11 +888,7 @@ def _precompute_lead_kdata(lead, kpoints_grid):
             HLk, HLLk, HDLk, SLk, SLLk, SDLk = lead.hamiltonian.get_hs_lead(
                 k, tab=lead.tab, v=lead.voltage
             )
-            pack["kdata"][key] = {
-                "subblocks": subblocks,
-                "HLk": HLk, "HLLk": HLLk, "HDLk": HDLk,
-                "SLk": SLk, "SLLk": SLLk, "SDLk": SDLk,
-            }
+            pack["kdata"][key] = _pack_lead_matrices(HLk, HLLk, HDLk, SLk, SLLk, SDLk, subblocks)
         else:
             kpoints_bloch = bloch_unfolder.unfold_points(list(np.asarray(k, dtype=float).reshape(3)))
             bloch_entries = []
@@ -901,17 +897,53 @@ def _precompute_lead_kdata(lead, kpoints_grid):
                 HLk, HLLk, HDLk, SLk, SLLk, SDLk = lead.hamiltonian.get_hs_lead(
                     kb_tensor, tab=lead.tab, v=lead.voltage
                 )
-                bloch_entries.append({
-                    "k_bloch": kb_tensor,
-                    "HLk": HLk, "HLLk": HLLk, "HDLk": HDLk,
-                    "SLk": SLk, "SLLk": SLLk, "SDLk": SDLk,
-                })
+                entry = _pack_lead_matrices(HLk, HLLk, HDLk, SLk, SLLk, SDLk, subblocks=None)
+                entry["k_bloch"] = kb_tensor
+                bloch_entries.append(entry)
             pack["kdata"][key] = {
                 "subblocks": subblocks,
                 "bloch_entries": bloch_entries,
             }
 
     return pack
+
+
+def _to_numpy_c128(x):
+    """Detach torch tensors and cast to a C-contiguous complex128 numpy array.
+
+    Workers receive these plain arrays so `selfEnergy` / `surface_green` skip the
+    per-energy torch→numpy round-trip, and the numba core can consume them
+    directly without the `@njit` boundary re-inferring layout.
+    """
+    if isinstance(x, torch.Tensor):
+        arr = x.detach().numpy()
+    else:
+        arr = np.asarray(x)
+    return np.ascontiguousarray(arr, dtype=np.complex128)
+
+
+def _pack_lead_matrices(HLk, HLLk, HDLk, SLk, SLLk, SDLk, subblocks):
+    """Build a per-k pack entry.
+
+    HLk/HLLk/SLk/SLLk go into the surface-Green core as numpy — convert them
+    once here so workers don't repeat the torch→numpy round-trip per energy,
+    and precompute ``h10 = conj(HLLk.T)`` / ``s10 = conj(SLLk.T)`` for the same
+    reason. HDLk/SDLk stay as torch tensors because `LeadProperty.HDL_reduced`
+    and the Bloch-branch matmul below use torch ops on them.
+    """
+    HLk_np = _to_numpy_c128(HLk)
+    HLLk_np = _to_numpy_c128(HLLk)
+    SLk_np = _to_numpy_c128(SLk)
+    SLLk_np = _to_numpy_c128(SLLk)
+    entry = {
+        "HLk": HLk_np, "HLLk": HLLk_np, "HDLk": HDLk,
+        "SLk": SLk_np, "SLLk": SLLk_np, "SDLk": SDLk,
+        "h10": np.ascontiguousarray(np.conj(HLLk_np.T)),
+        "s10": np.ascontiguousarray(np.conj(SLLk_np.T)),
+    }
+    if subblocks is not None:
+        entry["subblocks"] = subblocks
+    return entry
 
 
 def _compute_self_energy_from_pack(pack, k, e, eta_lead, method="Lopez-Sancho", se_numba_jit=None):
@@ -942,7 +974,8 @@ def _compute_self_energy_from_pack(pack, k, e, eta_lead, method="Lopez-Sancho", 
             E_ref=E_ref,
             etaLead=eta_lead,
             method=method,
-            numba_jit=se_numba_jit
+            numba_jit=se_numba_jit,
+            h10=entry["h10"], s10=entry["s10"],
         )
         return se
 
@@ -963,7 +996,8 @@ def _compute_self_energy_from_pack(pack, k, e, eta_lead, method="Lopez-Sancho", 
             E_ref=E_ref,
             etaLead=eta_lead,
             method=method,
-            numba_jit=se_numba_jit
+            numba_jit=se_numba_jit,
+            h10=be["h10"], s10=be["s10"],
         )
         phase_factor_m = torch.zeros([m_size, m_size], dtype=torch.complex128)
         bloch_R_list = pack["bloch_R_list"]
