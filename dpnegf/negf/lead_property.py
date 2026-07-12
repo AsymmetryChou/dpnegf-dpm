@@ -815,7 +815,7 @@ def compute_all_self_energy(eta, lead_L, lead_R, kpoints_grid, energy_grid,
     # logging state and the WARNING default) can match it when they reinit.
     parent_log_level = logging.getLogger().getEffectiveLevel()
     if len(total_tasks) <= ek_batch_size:
-        Parallel(n_jobs=safe_n_jobs, backend="loky")(
+        Parallel(n_jobs=min(safe_n_jobs, len(total_tasks)), backend="loky")(
             delayed(_self_energy_worker_blas)(k, e, eta, leadL_pack, leadR_pack,
                                                self_energy_save_path, se_numba_jit,
                                                parent_log_level, blas_threads_per_worker)
@@ -824,7 +824,7 @@ def compute_all_self_energy(eta, lead_L, lead_R, kpoints_grid, energy_grid,
     else:
         for i in range(0, len(total_tasks), ek_batch_size):
             batch = total_tasks[i:i+ek_batch_size]
-            Parallel(n_jobs=safe_n_jobs, backend="loky")(
+            Parallel(n_jobs=min(safe_n_jobs, len(batch)), backend="loky")(
                 delayed(_self_energy_worker_blas)(k, e, eta, leadL_pack, leadR_pack,
                                                    self_energy_save_path, se_numba_jit,
                                                    parent_log_level, blas_threads_per_worker)
