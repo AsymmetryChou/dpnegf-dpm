@@ -1,5 +1,14 @@
 import torch
-from dpnegf.negf.negf_utils import quad, gauss_xw,leggauss,update_kmap
+import ase
+import numpy as np
+import logging
+import json
+from typing import Optional, Union
+from pyinstrument import Profiler
+import os
+
+from dptb.utils.argcheck import get_cutoffs_from_model_options
+from dpnegf.negf.negf_utils import gauss_xw
 from dpnegf.utils.constants import valence_electron
 from dpnegf.negf.ozaki_res_cal import ozaki_residues
 from dpnegf.negf.negf_hamiltonian_init import NEGFHamiltonianInit
@@ -7,19 +16,11 @@ from dpnegf.utils.elec_struc_cal import ElecStruCal
 from dpnegf.negf.density import Ozaki,Fiori
 from dpnegf.negf.device_property import DeviceProperty
 from dpnegf.negf.lead_property import LeadProperty, compute_all_self_energy, _has_saved_self_energy
-from dpnegf.negf.negf_utils import is_fully_covered
-import ase
 from dpnegf.utils.constants import Boltzmann, eV2J
-import numpy as np
 from dpnegf.utils.make_kpoints import kmesh_sampling_negf
-import logging
-import json
 from dpnegf.negf.poisson_init import Grid,Interface3D,Dirichlet,Dielectric
 from dpnegf.negf.scf_method import PDIISMixer,DIISMixer,BroydenFirstMixer,BroydenSecondMixer,AndersonMixer
-from typing import Optional, Union
-from dpnegf.utils.tools import apply_gaussian_filter_3d
-from pyinstrument import Profiler
-import os
+
 
 log = logging.getLogger(__name__)
 
@@ -1015,7 +1016,6 @@ class NEGF(object):
             dict: The updated or initialized AtomicData_options dictionary.
         """
         if AtomicData_options is None:
-            from dpnegf.utils.argcheck import get_cutoffs_from_model_options
             # get the cutoffs from model options
             r_max, er_max, oer_max  = get_cutoffs_from_model_options(model.model_options)
             AtomicData_options = {'r_max': r_max, 'er_max': er_max, 'oer_max': oer_max}
