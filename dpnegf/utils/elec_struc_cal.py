@@ -11,7 +11,7 @@ import logging
 log = logging.getLogger(__name__)
 from dptb.data import AtomicData, AtomicDataDict, block_to_feature
 from dptb.nn.energy import Eigenvalues
-from dptb.utils.argcheck import get_cutoffs_from_model_options
+from dpnegf.utils.argcheck import get_cutoffs_from_model_options
 from copy import deepcopy
 from dpnegf.utils.constants import Boltzmann,eV2J
 
