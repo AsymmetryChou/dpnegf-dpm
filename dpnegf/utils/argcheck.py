@@ -1019,7 +1019,6 @@ def negf():
     doc_scf_options = ""
     doc_stru_options = ""
     doc_poisson_options = ""
-    doc_sgf_solver = ""
     doc_espacing = ""
     doc_emin = ""
     doc_emax = ""
@@ -1036,44 +1035,119 @@ def negf():
     doc_density_options = ""
     doc_out_potential = ""
 
+    doc_self_energy_options = ("Self-energy stage options: SGF solver, numba JIT, "
+                               "on-disk cache, and CPU parallelism (joblib workers, "
+                               "BLAS threads, ek batching).")
+    doc_rgf_options = ("Recursive Green's function stage options: compute device "
+                       "('cpu' or 'cuda') and energy-loop chunk size. Independent "
+                       "from the self-energy pool, which always runs on CPU.")
+    doc_hs_cache = "On-disk cache of the device Hamiltonian and overlap matrix."
+    doc_output_options = "Which physical quantities to write out at the end of the run."
+
     return [
         Argument("scf", bool, optional=True, default=False, doc=doc_scf),
         Argument("block_tridiagonal", bool, optional=True, default=False, doc=doc_block_tridiagonal),
         Argument("plot_blocks", bool, optional=True, default=False, doc="Whether to plot the block tridiagonalization process"),
         Argument("ele_T", [float, int], optional=False, doc=doc_ele_T),
         Argument("unit", str, optional=True, default="Hartree", doc=doc_unit),
-        Argument("use_saved_HS", bool, optional=True, default=False, doc="Whether to use saved Hamiltonian and overlap matrix"),
-        Argument("saved_HS_path", str, optional=True, default=None, doc="The path to the saved Hamiltonian and overlap matrix"),
+        Argument("hs_cache", dict, optional=True, default={}, sub_fields=hs_cache_options(), doc=doc_hs_cache),
         Argument("scf_options", dict, optional=True, default={}, sub_fields=[], sub_variants=[scf_options()], doc=doc_scf_options),
         Argument("stru_options", dict, optional=False, sub_fields=stru_options(), doc=doc_stru_options),
         Argument("poisson_options", dict, optional=True, default={}, sub_fields=[], sub_variants=[poisson_options()], doc=doc_poisson_options),
-        Argument("sgf_solver", str, optional=True, default="Sancho-Rubio", doc=doc_sgf_solver),
-        Argument("use_saved_se", bool, optional=True, default=False, doc="whether to use saved self energy"),
-        Argument("self_energy_save_path", str, optional=True, default=None, doc="the directory to save the self energy or load the self energy"),
-        Argument("se_info_display", bool, optional=True, default=False, doc="whether to display the self energy information"),
-        Argument("se_numba_jit", [bool, None], optional=True, default=None, doc="whether to use numba JIT for self energy calculation"),
+        Argument("self_energy_options", dict, optional=True, default={}, sub_fields=self_energy_options(), doc=doc_self_energy_options),
         Argument("espacing", [int, float], optional=False, doc=doc_espacing),
         Argument("emin", [int, float], optional=False, doc=doc_emin),
         Argument("emax", [int, float], optional=False, doc=doc_emax),
-        Argument("e_batch_size", [int, float], optional=True, default=None, doc="the batch size for energy points in NEGF calculation"),
+        Argument("rgf_options", dict, optional=True, default={}, sub_fields=rgf_options_group(), doc=doc_rgf_options),
         Argument("e_fermi", [int, float], optional=True, default=None ,doc=doc_e_fermi),
         Argument("density_options", dict, optional=True, default={}, sub_fields=[], sub_variants=[density_options()], doc=doc_density_options),
         Argument("eta_lead", [int, float], optional=True, default=1e-5, doc=doc_eta_lead),
         Argument("eta_device", [int, float], optional=True, default=0., doc=doc_eta_device),
-        Argument("out_dos", bool, optional=True, default=False, doc=doc_out_dos),
-        Argument("out_tc", bool, optional=True, default=False, doc=doc_out_tc),
-        Argument("out_density", bool, optional=True, default=False, doc=doc_out_density),
-        Argument("out_potential", bool, optional=True, default=False, doc=doc_out_potential),
-        Argument("out_current", bool, optional=True, default=False, doc=doc_out_current),
-        Argument("out_current_nscf", bool, optional=True, default=False, doc=doc_out_current_nscf),
-        Argument("out_ldos", bool, optional=True, default=False, doc=doc_out_ldos),
-        Argument("out_lcurrent", bool, optional=True, default=False, doc=doc_out_lcurrent),
-        Argument("n_cpus", [int, None], optional=True, default=None, doc="Number of CPU cores for parallel self-energy calculation. Default None uses os.cpu_count()."),
-        Argument("rgf_device", str, optional=True, default="cpu",
-                 doc="Device used only for the RGF (recursive Green's function) step. "
-                     "'cpu' (default) or 'cuda'. Hamiltonian initialization always runs "
-                     "on CPU (it is the memory-heavy phase). Self-energy always runs on "
-                     "CPU because it goes through joblib + numba.")
+        Argument("output_options", dict, optional=True, default={}, sub_fields=output_options(), doc=doc_output_options),
+    ]
+
+
+def output_options():
+    return [
+        Argument("dos", bool, optional=True, default=False, doc="Write density of states."),
+        Argument("tc", bool, optional=True, default=False, doc="Write transmission coefficient."),
+        Argument("density", bool, optional=True, default=False, doc="Write electron density."),
+        Argument("potential", bool, optional=True, default=False, doc="Write electrostatic potential."),
+        Argument("current", bool, optional=True, default=False, doc="Write self-consistent current."),
+        Argument("current_nscf", bool, optional=True, default=False, doc="Write non-self-consistent current."),
+        Argument("ldos", bool, optional=True, default=False, doc="Write local density of states."),
+        Argument("lcurrent", bool, optional=True, default=False, doc="Write local current."),
+    ]
+
+
+def self_energy_cache_options():
+    return [
+        Argument("use_saved", bool, optional=True, default=False,
+                 doc="Whether to load self-energy from an on-disk HDF5 cache instead of recomputing."),
+        Argument("save_path", [str, None], optional=True, default=None,
+                 doc="Directory that holds (or will hold) the self-energy HDF5 files. "
+                     "If None, defaults to `<results_path>/self_energy`."),
+    ]
+
+
+def self_energy_parallel_options():
+    doc_n_workers = ("Number of joblib workers used to parallelize the self-energy "
+                     "sweep over (k, E). -1 (default) auto-selects based on the CPU "
+                     "and memory budget (see `_get_safe_n_jobs`).")
+    doc_cpu_budget = ("Total CPU cores the self-energy pool is allowed to size against. "
+                      "None (default) uses os.cpu_count(). This bounds both `n_workers` "
+                      "and `blas_threads` so BLAS-thread * worker <= cpu_budget.")
+    doc_blas_threads = ("BLAS/LAPACK threads per worker inside the Lopez-Sancho loop. "
+                       "None (default) auto-tunes by timing a sample (k, E) at 1, 2, 4, "
+                       "8, and cpu_budget/n_workers threads and keeping the fastest.")
+    doc_ek_batch = ("Batch size for (k, E) tasks handed to joblib. Larger = fewer "
+                    "batches, more memory. Default 200.")
+    return [
+        Argument("n_workers", [int, None], optional=True, default=-1, doc=doc_n_workers),
+        Argument("cpu_budget", [int, None], optional=True, default=None, doc=doc_cpu_budget),
+        Argument("blas_threads", [int, None], optional=True, default=None, doc=doc_blas_threads),
+        Argument("ek_batch_size", int, optional=True, default=200, doc=doc_ek_batch),
+    ]
+
+
+def self_energy_options():
+    doc_solver = ("Surface Green's function solver. 'Sancho-Rubio' (default) or "
+                  "'Lopez-Sancho'.")
+    doc_numba_jit = ("Whether to JIT-compile the surface Green's function core with "
+                     "numba. None (default) uses numba when available.")
+    doc_info_display = ("Whether to log per-(k, E) self-energy solver info. Verbose; "
+                        "off by default.")
+    doc_cache = "On-disk cache of the self-energy for reuse across runs."
+    doc_parallel = "CPU parallelism knobs for the self-energy sweep."
+    return [
+        Argument("solver", str, optional=True, default="Sancho-Rubio", doc=doc_solver),
+        Argument("numba_jit", [bool, None], optional=True, default=None, doc=doc_numba_jit),
+        Argument("info_display", bool, optional=True, default=False, doc=doc_info_display),
+        Argument("cache", dict, optional=True, default={}, sub_fields=self_energy_cache_options(), doc=doc_cache),
+        Argument("parallel", dict, optional=True, default={}, sub_fields=self_energy_parallel_options(), doc=doc_parallel),
+    ]
+
+
+def rgf_options_group():
+    doc_device = ("Device used only for the RGF (recursive Green's function) step. "
+                  "'cpu' (default) or 'cuda'. Hamiltonian initialization always runs "
+                  "on CPU (it is the memory-heavy phase). Self-energy always runs on "
+                  "CPU because it goes through joblib + numba.")
+    doc_e_batch = ("Number of energy points solved in one batched RGF call. None "
+                   "(default) auto-picks from free CUDA memory on 'cuda'; on 'cpu' "
+                   "the full grid is used.")
+    return [
+        Argument("device", str, optional=True, default="cpu", doc=doc_device),
+        Argument("e_batch_size", [int, float, None], optional=True, default=None, doc=doc_e_batch),
+    ]
+
+
+def hs_cache_options():
+    return [
+        Argument("use_saved", bool, optional=True, default=False,
+                 doc="Whether to load the device Hamiltonian and overlap from an on-disk cache."),
+        Argument("save_path", [str, None], optional=True, default=None,
+                 doc="Path to the saved Hamiltonian / overlap file. Required when use_saved is true."),
     ]
 
 def stru_options():
@@ -1335,11 +1409,88 @@ def run_options():
 
 def normalize_run(data):
 
+    _migrate_legacy_negf_task_options(data)
+
     run_op = run_options()
     data = run_op.normalize_value(data)
     run_op.check_value(data, strict=True)
 
     return data
+
+
+# (flat legacy key)  -> tuple describing where it now lives inside task_options.
+# Tuples of length 1 = top-level under task_options; length 2 = one sub-dict; etc.
+_NEGF_LEGACY_KEY_MAP = {
+    "sgf_solver":            ("self_energy_options", "solver"),
+    "se_numba_jit":          ("self_energy_options", "numba_jit"),
+    "se_info_display":       ("self_energy_options", "info_display"),
+    "use_saved_se":          ("self_energy_options", "cache", "use_saved"),
+    "self_energy_save_path": ("self_energy_options", "cache", "save_path"),
+    "n_cpus":                ("self_energy_options", "parallel", "cpu_budget"),
+    "rgf_device":            ("rgf_options", "device"),
+    "e_batch_size":          ("rgf_options", "e_batch_size"),
+    "use_saved_HS":          ("hs_cache", "use_saved"),
+    "saved_HS_path":         ("hs_cache", "save_path"),
+    "out_dos":               ("output_options", "dos"),
+    "out_tc":                ("output_options", "tc"),
+    "out_density":           ("output_options", "density"),
+    "out_potential":         ("output_options", "potential"),
+    "out_current":           ("output_options", "current"),
+    "out_current_nscf":      ("output_options", "current_nscf"),
+    "out_ldos":              ("output_options", "ldos"),
+    "out_lcurrent":          ("output_options", "lcurrent"),
+}
+
+
+def _migrate_legacy_negf_task_options(data):
+    """Rewrite pre-refactor flat NEGF keys into the new nested shape in place.
+
+    The NEGF `task_options` block used to expose parallelism, RGF device,
+    self-energy caching, and HS caching as top-level flat keys. They now live
+    under `self_energy_options`, `rgf_options`, and `hs_cache`. To avoid
+    breaking existing input files, this function inspects `task_options`
+    before strict-schema check, and for each legacy key it finds:
+
+      * emits `log.warning` naming the new location,
+      * moves the value into the correct nested sub-dict (creating parents),
+      * deletes the flat key so the strict check sees the new shape only.
+
+    Only runs when `task_options.task == 'negf'`. Silent no-op otherwise.
+    """
+    if not isinstance(data, dict):
+        return
+    task_options = data.get("task_options")
+    if not isinstance(task_options, dict):
+        return
+    if task_options.get("task") != "negf":
+        return
+
+    for legacy_key, path in _NEGF_LEGACY_KEY_MAP.items():
+        if legacy_key not in task_options:
+            continue
+        value = task_options.pop(legacy_key)
+        new_location = "task_options." + ".".join(path)
+        log.warning(
+            f"NEGF task_options: '{legacy_key}' is deprecated; "
+            f"use '{new_location}' instead. "
+            f"Migrating value automatically for this run."
+        )
+
+        cursor = task_options
+        for parent in path[:-1]:
+            existing = cursor.get(parent)
+            if not isinstance(existing, dict):
+                existing = {}
+                cursor[parent] = existing
+            cursor = existing
+        leaf = path[-1]
+        if leaf in cursor:
+            log.warning(
+                f"NEGF task_options: both legacy '{legacy_key}' and "
+                f"'{new_location}' are set; keeping the value from '{new_location}'."
+            )
+        else:
+            cursor[leaf] = value
 
 def task_options():
     doc_task = '''The string define the task DeePTB conduct, includes: 
