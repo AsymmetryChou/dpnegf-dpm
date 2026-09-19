@@ -1,14 +1,11 @@
 {
-    "structure": "./struct_negf.xyz",
+    "structure": "./stru_negf.xyz",
     "task_options": {
         "task": "negf",
         "scf": false,
         "block_tridiagonal": true,
         "ele_T": 300,
         "unit": "eV",
-        "espacing": 0.05,
-        "emin": -10,
-        "emax": 10,
         "eta_lead": 1e-05,
         "eta_device": 0.0,
         "stru_options": {
@@ -61,13 +58,27 @@
             "err": 1e-05
         },
         "self_energy_options": {
-            "solver": "Sancho-Rubio"
+            "solver": "Sancho-Rubio",
+            "numba_jit": true
         },
         "output_options": {
-            "dos": true,
             "tc": true,
-            "ldos": true,
-            "current_nscf": false
+            "conductance": true
+        },
+        "energy_grid": {
+            "method": "clenshaw_curtis",
+            "num_points": 33,
+            "half_width": 0.4
+        },
+        "conductance_options": {
+            "mu": [
+                "Ef"
+            ],
+            "lead": "lead_L"
+        },
+        "rgf_options": {
+            "device": "cpu",
+            "e_batch_size": 8
         }
     }
 }
