@@ -20,7 +20,7 @@ from dpnegf.utils.constants import Boltzmann, eV2J
 from dpnegf.utils.make_kpoints import kmesh_sampling_negf
 from dpnegf.utils.band_edge import validate_fermi_in_band_gap
 from dpnegf.utils.energy_grid import build_energy_grid, uniform_nodes
-from dpnegf.utils.conductance import integrtate_conductance
+from dpnegf.utils.conductance import integrate_conductance
 from dpnegf.utils.argcheck import validate_energy_options
 from dpnegf.negf.poisson_init import Grid,Interface3D,Dirichlet,Dielectric
 from dpnegf.negf.scf_method import PDIISMixer,DIISMixer,BroydenFirstMixer,BroydenSecondMixer,AndersonMixer
@@ -148,10 +148,14 @@ class NEGF(object):
         self.eta_lead = eta_lead; self.eta_device = eta_device
         self.emin = emin; self.emax = emax; self.espacing = espacing
         self.stru_options = stru_options
+        self.compute_band_edges = self.stru_options.get("compute_band_edges", False)
         self.poisson_options = poisson_options
-        if e_fermi is None:
+        if e_fermi is None or self.compute_band_edges:
             for lead in ["lead_L", "lead_R"]:
-                assert "kmesh_lead_Ef" in self.stru_options[lead], f"{lead} must have 'kmesh_lead_Ef' set in stru_options if e_fermi is None"
+                assert self.stru_options[lead].get("kmesh_lead_Ef") is not None, (
+                    f"{lead} must have 'kmesh_lead_Ef' set in stru_options"
+                     "when calculating a Fermi level or band edges"
+                )
 
 
         self.pbc = self.stru_options["pbc"]
@@ -251,28 +255,51 @@ class NEGF(object):
 
         log.info(msg="-------------Fermi level calculation-------------")
         e_fermi = {}; chemiPot = {}
-        # calculate Fermi level
-        if  self.e_fermi is None:        
+        input_e_fermi = self.e_fermi
+        if self.e_fermi is None or self.compute_band_edges:
             elec_cal = ElecStruCal(model=model,device=torch.device("cpu"))
+            neutral_nel_atom_lead = self.get_nel_atom_lead(struct_leads)
             nel_atom_lead = self.get_nel_atom_lead(
-                                struct_leads, 
-                                charge={lead_tag: self.stru_options[lead_tag].get("charge", 0) for lead_tag in ["lead_L", "lead_R"]}
+                                    struct_leads,
+                                    charge={lead_tag: self.stru_options[lead_tag].get("charge", 0) for lead_tag in ["lead_L", "lead_R"]},
                                 )
             log.info(msg="Number of electrons in lead_L: {0}".format(nel_atom_lead["lead_L"]))
             log.info(msg="Number of electrons in lead_R: {0}".format(nel_atom_lead["lead_R"]))
+            if self.compute_band_edges:
+                self.E_c = {}
+                self.E_v = {}
             for lead_tag in ["lead_L", "lead_R"]:
-                log.info(msg="-----Calculating Fermi level for {0}-----".format(lead_tag))
-                _, e_fermi[lead_tag]  = elec_cal.get_fermi_level(data=struct_leads[lead_tag], 
-                                                                nel_atom = nel_atom_lead[lead_tag],
-                                                                meshgrid=self.stru_options[lead_tag]["kmesh_lead_Ef"],
-                                                                AtomicData_options=AtomicData_options,
-                                                                smearing_method=self.stru_options.get("e_fermi_smearing", "FD"),
-                                                                temp=self.ele_T,
-                                                                eig_solver=self.stru_options.get("eig_solver", "torch"),)
+                log.info(msg="-----Calculating electronic structure for {0}-----".format(lead_tag))
+                calculated_e_fermi, e_c, e_v = self._calculate_lead_electronic_structure(
+                        elec_cal=elec_cal,
+                        lead_tag=lead_tag,
+                        structure=struct_leads[lead_tag],
+                        nel_atom=nel_atom_lead[lead_tag],
+                        neutral_nel_atom=neutral_nel_atom_lead[lead_tag],
+                        AtomicData_options=AtomicData_options,
+                )
+                if self.compute_band_edges:
+                    self.E_c[lead_tag] = e_c
+                    self.E_v[lead_tag] = e_v
+                if input_e_fermi is None:
+                    e_fermi[lead_tag] = calculated_e_fermi
+                else:
+                    e_fermi[lead_tag] = input_e_fermi
         else:
-            e_fermi["lead_L"] = self.e_fermi
-            e_fermi["lead_R"] = self.e_fermi
+            e_fermi["lead_L"] = input_e_fermi
+            e_fermi["lead_R"] = input_e_fermi
+            
+        if input_e_fermi is not None:
             log.info(msg="Fermi level is set to {0} from input file".format(self.e_fermi))
+        
+        if self.compute_band_edges:
+            for lead_tag in ["lead_L", "lead_R"]:
+                validate_fermi_in_band_gap(
+                    e_fermi=e_fermi[lead_tag], 
+                    e_c=self.E_c[lead_tag], 
+                    e_v=self.E_v[lead_tag], 
+                    lead_name=lead_tag
+                )
         
         # calculate electrochemical potential
         for lead_tag in ["lead_L", "lead_R"]:
@@ -297,7 +324,10 @@ class NEGF(object):
             log.info(msg="Zero bias case detected.")
 
         log.info(msg="Fermi level for lead_L: {0}".format(self.e_fermi["lead_L"]))
-        log.info(msg="Fermi level for lead_R: {0}".format(self.e_fermi["lead_R"]))    
+        log.info(msg="Fermi level for lead_R: {0}".format(self.e_fermi["lead_R"])) 
+        if self.compute_band_edges:
+            log.info(msg="Band edges for lead_L: E_c = {0}, E_v = {1}".format(self.E_c["lead_L"], self.E_v["lead_L"]))
+            log.info(msg="Band edges for lead_R: E_c = {0}, E_v = {1}".format(self.E_c["lead_R"], self.E_v["lead_R"]))
         log.info(msg="Electrochemical potential for lead_L: {0}".format(self.chemiPot["lead_L"]))
         log.info(msg="Electrochemical potential for lead_R: {0}".format(self.chemiPot["lead_R"]))        
         log.info(msg="Reference energy E_ref: {0}".format(E_ref))
@@ -364,6 +394,9 @@ class NEGF(object):
         self.out_lcurrent = out_opts.get("lcurrent", False)
         assert not (self.out_lcurrent and self.block_tridiagonal)
         self.out = {}
+        if self.compute_band_edges:
+            self.out["E_c"] = dict(self.E_c)
+            self.out["E_v"] = dict(self.E_v)
         # initialize density class
         self.density_options = density_options
         self.generate_energy_grid()
@@ -386,7 +419,27 @@ class NEGF(object):
         else:
             raise ValueError
 
+    def _calculate_lead_electronic_structure(
+            self, elec_cal, lead_tag, structure, nel_atom, neutral_nel_atom, 
+            AtomicData_options):
 
+        result = elec_cal.get_fermi_level(
+            data=structure,
+            nel_atom=nel_atom,
+            neutral_nel_atom=neutral_nel_atom,
+            meshgrid=self.stru_options[lead_tag]["kmesh_lead_Ef"],
+            AtomicData_options=AtomicData_options,
+            smearing_method=self.stru_options.get("smearing_method", "FD"),
+            temp=self.ele_T,
+            eig_solver=self.stru_options.get("eig_solver", "torch"),
+            compute_band_edges=self.compute_band_edges,
+        )
+        if self.compute_band_edges:
+            _, e_fermi, e_c, e_v = result
+            return e_fermi, e_c, e_v
+
+        _, e_fermi = result
+        return e_fermi, None, None
 
     def generate_energy_grid(self):
 
@@ -1168,4 +1221,3 @@ class NEGF(object):
 
     def SCF(self):
         pass
-

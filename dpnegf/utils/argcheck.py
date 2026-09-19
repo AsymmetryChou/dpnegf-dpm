@@ -312,6 +312,7 @@ def stru_options():
     doc_e_fermi_smearing = "Smearing method for lead Fermi-level determination. Default: 'FD' (Fermi-Dirac)."
     doc_eig_solver = "Eigenvalue solver used for lead Fermi-level calculation. Default: 'torch'."
     doc_nel_atom = "Number of valence electrons per element, e.g. {'C': 4}. Required for SCF or when computing lead Fermi-level."
+    doc_compute_band_edges = "Whether to compute the conduction and valence band edges for each lead. Default: False."
     return [
         Argument("device", dict, optional=False, sub_fields=device(), doc=doc_device),
         Argument("lead_L", dict, optional=False, sub_fields=lead(), doc=doc_lead_L),
@@ -322,6 +323,7 @@ def stru_options():
         Argument("time_reversal_symmetry", list, optional=True, default=True, doc=doc_time_reversal_symmetry),
         Argument("e_fermi_smearing", str, optional=True, default="FD", doc=doc_e_fermi_smearing),
         Argument("eig_solver", str, optional=True, default="torch", doc=doc_eig_solver),
+        Argument("compute_band_edges", bool, optional=True, default=False, doc=doc_compute_band_edges),
         Argument("nel_atom", [dict,None], optional=True, default=None, doc=doc_nel_atom)
     ]
 

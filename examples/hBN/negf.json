@@ -1,5 +1,5 @@
 {
-    "structure": "./struct_negf.xyz",
+    "structure": "./stru_negf.xyz",
     "task_options": {
         "task": "negf",
         "scf": false,
@@ -32,6 +32,7 @@
                 "id": "32-64",
                 "sort": true
             },
+            "compute_band_edges": true,
             "lead_L": {
                 "id": "0-32",
                 "voltage": 0.0,
