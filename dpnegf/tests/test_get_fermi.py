@@ -3,6 +3,7 @@ from dptb.postprocess.elec_struc_cal import ElecStruCal
 # from dptb.postprocess.bandstructure.band import Band
 from dptb.nn.build import build_model
 import os
+import torch
 from pathlib import Path
 
 rootdir = os.path.join(Path(os.path.abspath(__file__)).parent, "data")
@@ -12,6 +13,7 @@ def test_get_fermi():
     ckpt = f"{rootdir}/test_get_fermi/nnsk.best.pth"  #  'hopping': {'method': 'poly2exp', 'rs': 5.0, 'w': 0.6},
     stru_data = f"{rootdir}/test_get_fermi/PRIMCELL.vasp"
 
+    torch.set_default_dtype(torch.float32)
     model = build_model(checkpoint=ckpt)
     nel_atom = {"Au":11}
 

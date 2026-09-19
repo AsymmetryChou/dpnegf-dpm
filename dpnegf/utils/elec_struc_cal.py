@@ -14,6 +14,7 @@ from dptb.nn.energy import Eigenvalues
 from dptb.utils.argcheck import get_cutoffs_from_model_options
 from copy import deepcopy
 from dpnegf.utils.constants import Boltzmann,eV2J
+from dpnegf.utils.band_edge import calculate_band_edges
 
 # This class `ElecStruCal`  is designed to calculate electronic structure properties such as
 # eigenvalues and Fermi energy based on provided input data and model. 
@@ -218,7 +219,9 @@ class ElecStruCal(object):
     def get_fermi_level(self, data: Union[AtomicData, ase.Atoms, str], nel_atom: dict, \
                         meshgrid: list = None, klist: np.ndarray=None, pbc:Union[bool,list]=None,
                         AtomicData_options:dict=None, q_tol:float=1e-10, smearing_method:str='FD', 
-                        temp:float=300,eig_solver:Optional[str]='torch'):
+                        temp:float=300,eig_solver:Optional[str]='torch',
+                        compute_band_edges: bool=False,
+                        neutral_nel_atom: Optional[dict]=None):
         '''This function calculates the Fermi level based on provided data with iteration method, electron counts per atom, and
         optional parameters like specific k-points and eigenvalues.
         
@@ -257,10 +260,16 @@ class ElecStruCal(object):
         temp : float
             The `temp` parameter in the `get_fermi_level` function represents the temperature for smearing in the
         calculation of the Fermi energy.
+        compute_band_edges : bool
+            If ture, independently calculate the semiconductor band edges from the
+            neutral occupied-band count and return ``E_c`` and ``E_v``.  
+        neutral_nel_atom : dict, optional
+            Neutral valence-electron counts used only to identify the occupied
+            bands for band-edge calculations.  Defaults to ``nel_atom``.
         
         Returns
         -------
-            The function `get_fermi_level` returns two values: `data` and `E_fermi`.
+            The function `get_fermi_level` returns two values: `data` and `E_fermi`, `E_c` and `E_v`.
         
         '''
 
@@ -302,6 +311,25 @@ class ElecStruCal(object):
             E_fermi = None
             raise RuntimeError('nel_atom should be provided to calculate Fermi energy.')
         
+        if compute_band_edges:
+            if neutral_nel_atom is None:
+                neutral_nel_atom = nel_atom
+            if not isinstance(neutral_nel_atom, dict):
+                raise ValueError('neutral_nel_atom should be a dictionary of atom type to neutral valence electron count.')
+            neutral_total_nel = np.array(
+                [neutral_nel_atom[s] for s in atomtype_symbols]
+            ).sum()
+            E_c, E_v = calculate_band_edges(
+                eigs,
+                neutral_total_nel,
+                spindeg,
+            ) 
+            log.info(
+                f'Calculated band edges: E_c = {E_c}, E_v = {E_v} based on' 
+                f'the neutral valence electrons setting : {neutral_nel_atom} .'
+            )
+            return data, E_fermi, E_c, E_v
+            
         return data, E_fermi
 
 
