@@ -59,7 +59,8 @@ def calculate_band_edges(
 
     if band_gap <= gap_tolerance:
         raise ValueError(
-            "The sampled spectrum does not have a band gap greater than "
+            "The sampled spectrum is not semiconducting: it does not have a "
+            "band gap greater than "
             f"gap_tolerance={gap_tolerance}: "
             f"E_v={e_v}, E_c={e_c}, E_g={band_gap}."
         )
@@ -74,9 +75,15 @@ def validate_fermi_in_band_gap(
 ) -> None:
     """Raise an error if the Fermi level is not in the band gap."""
 
-    label = f" for lead '{lead_name}'" if lead_name else ""
+    label = f" for {lead_name}" if lead_name else ""
+    if not all(np.isfinite(value) for value in (e_fermi, e_c, e_v)):
+        raise ValueError(
+            f"Fermi level and band edges must be finite values{label}: "
+            f"E_v={e_v}, E_f={e_fermi}, E_c={e_c}."
+        )
     if not (e_v < e_fermi < e_c):
         raise ValueError(
-            f"The Fermi level is not in the band gap{label}: "
-            f"E_v={e_v}, E_c={e_c}, E_F={e_fermi}."
+            f"Fermi level is not inside the semiconductor band gap{label}: "
+            f"expected E_v < E_f < E_c, got E_v={e_v}, E_f={e_fermi},"
+            f"E_c={e_c}, E_g={e_c - e_v}."
         )
