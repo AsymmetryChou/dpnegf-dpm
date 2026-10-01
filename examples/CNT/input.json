@@ -111,7 +111,7 @@
             "density": true
         }
     },
-    "structure": "./ready_struct.xyz",
+    "structure": "./cnt7_0.xyz",
     "AtomicData_options": {
         "r_max": 4.6
     }
