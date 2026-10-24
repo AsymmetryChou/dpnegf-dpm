@@ -12,6 +12,7 @@
         "eta_device": 1e-05,
         "self_energy_options": {
             "solver": "Sancho-Rubio",
+            "numba_jit": true,
             "parallel": {
                 "cpu_budget": 8
             }
