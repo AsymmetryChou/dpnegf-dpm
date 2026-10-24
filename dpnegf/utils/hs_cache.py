@@ -19,14 +19,14 @@ def find_kpoint_index(kpoints, kpoint):
 
 
 def read_complex(group, name, device=None, index=None):
-    """Read one real/imaginary dataset pair without dtype down-casting."""
+    """Read one block, assembling complex values on the requested device."""
 
     selection = () if index is None else index
-    real = torch.from_numpy(np.asarray(group[f"{name}_real"][selection]))
-    imag = torch.from_numpy(np.asarray(group[f"{name}_imag"][selection]))
+    real = torch.from_numpy(np.asarray(group[f"{name}_real"][selection])).to(device=device)
+    imag = torch.from_numpy(np.asarray(group[f"{name}_imag"][selection])).to(device=device)
     value = torch.complex(real, imag).to(torch.complex128)
 
-    return value.to(device) if device is not None else value
+    return value
 
 
 def read_optional_metadata(dataset):
