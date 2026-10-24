@@ -25,8 +25,9 @@ class _FakeHamiltonian:
         self._packed = (hd, sd, hl, su, sl, hu)
         self.device_norbs = device_norbs
 
-    def get_hs_device(self, kpoint, V, block_tridiagonal):
-        return self._packed
+    def get_hs_device(self, kpoint, V, block_tridiagonal, device=None):
+        assert device is not None
+        return tuple([block.to(device) for block in parts] for parts in self._packed)
 
 
 class _FakeLead:

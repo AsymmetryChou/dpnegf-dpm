@@ -29,6 +29,41 @@ from dpnegf.negf.scf_method import PDIISMixer,DIISMixer,BroydenFirstMixer,Broyde
 
 log = logging.getLogger(__name__)
 
+def _initialization_device(model, device=None):
+    model_device = getattr(model, "device", None)
+    if model_device is None:
+        model_device = next(model.parameters(), torch.empty(0)).device
+    model_device = torch.device(model_device)
+    target = torch.device(model_device if device is None else device)
+    if target.type not in ("cpu", "cuda"):
+        raise ValueError("Hamiltonian initialization requires cpu or cuda[:index].")
+    if target.type == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA initialization requested, but CUDA is unavailable.")
+        target = torch.device(
+            "cuda",
+            torch.cuda.current_device() if target.index is None else target.index,
+        )
+        if target.index >= torch.cuda.device_count():
+            raise ValueError(f"CUDA device index is unavailable: {target}.")
+    else:
+        target = torch.device("cpu")
+    if (
+        target.type == "cuda"
+        and model_device.type == "cuda"
+        and model_device.index is None
+    ):
+        model_device = torch.device("cuda", torch.cuda.current_device())
+    if model_device.type != target.type or (
+        target.type == "cuda" and model_device.index != target.index
+    ):
+        raise ValueError(
+            f"Model device {model_device} does not match initialization device {target}. "
+            "Construct the model with build_model(common_options={'device': ...}); "
+            "moving parameters alone may leave DeePTB metadata on the old device."
+        )
+    return target
+
 @contextmanager
 def _profile_to_html(output_path: str):
     profiler = Profiler()
@@ -74,8 +109,10 @@ class NEGF(object):
                 conductance_options: Optional[dict]=None,
                 btd_initialization: str="dense",
                 direct_btd_max_mib: Optional[float]=None,
+                device: Union[str, torch.device, None]=None,
                 **kwargs):
 
+        self.init_device = _initialization_device(model, device)
         # Use an explicitly supplied energy grid; otherwise preserve
         # the legacy uniform-grid configuration.
         self.energy_grid_options = (
@@ -239,7 +276,7 @@ class NEGF(object):
                                                         stru_options=self.stru_options,
                                                         unit = self.unit, 
                                                         results_path=self.results_path,
-                                                        torch_device = torch.device("cpu"),
+                                                        torch_device = self.init_device,
                                                         use_saved_se = self.use_saved_se,
                                                         self_energy_save_path = self.self_energy_save_path,
                                                         btd_initialization = btd_initialization,
@@ -271,7 +308,7 @@ class NEGF(object):
         e_fermi = {}; chemiPot = {}
         input_e_fermi = self.e_fermi
         if self.e_fermi is None or self.compute_band_edges:
-            elec_cal = ElecStruCal(model=model,device=torch.device("cpu"))
+            elec_cal = ElecStruCal(model=model,device=self.init_device)
             neutral_nel_atom_lead = self.get_nel_atom_lead(struct_leads)
             nel_atom_lead = self.get_nel_atom_lead(
                                     struct_leads,
