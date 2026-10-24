@@ -10,6 +10,10 @@ from dptb.data import AtomicData, AtomicDataDict
 from dptb.utils.constants import anglrMId
 
 from dpnegf.negf.split_btd import compute_blocks
+from dpnegf.utils.direct_btd_layout import (
+    AssemblyPlan, LocalTopology, CudaTopology, CudaAssemblyPlan
+)
+
 
 log = logging.getLogger(__name__)
 
@@ -20,7 +24,7 @@ log = logging.getLogger(__name__)
 class LocalBlocks:
     """Expand local triangular features without constructing dense H/S."""
 
-    def __init__(self, data, idp, overlap=False):
+    def __init__(self, data, idp, overlap=False, topology=None):
         soc = data.get(AtomicDataDict.NODE_SOC_SWITCH_KEY, False)
         if torch.as_tensor(soc).any():
             raise ValueError("Direct BTD does not support SOC.")
@@ -40,26 +44,21 @@ class LocalBlocks:
         if node_features is None:
             raise ValueError(f"Direct BTD requires DeePTB field {node_key}.")
         atom_types = data[AtomicDataDict.ATOM_TYPE_KEY].flatten()
-        self.masks = [idp.mask_to_basis[int(atom_type)] for atom_type in atom_types]
-        self.offsets = np.cumsum(
-            [0] + [int(mask.sum()) for mask in self.masks]
-        )
-        self.edges = data[AtomicDataDict.EDGE_INDEX_KEY].cpu().numpy()
-        self.shifts = data[AtomicDataDict.EDGE_CELL_SHIFT_KEY]
-        self.edge_orders = [
-            np.argsort(endpoints, kind="stable") for endpoints in self.edges
-        ]
-        self.edge_starts = [
-            np.concatenate(
-                (
-                    [0],
-                    np.cumsum(
-                        np.bincount(endpoints, minlength=len(atom_types))
-                    ),
-                )
-            )
-            for endpoints in self.edges
-        ]
+        if edge_features.device.type == "cuda":
+            self.topology = topology if topology is not None else CudaTopology(data, idp)
+            self.offsets = self.topology.offsets
+            self.shifts = self.topology.shifts
+            self.nodes = node_features
+            self.hoppings = edge_features
+            self._prepare_expansion(idp)
+            return
+        self.topology = topology if topology is not None else LocalTopology(data, idp)
+        self.masks = self.topology.masks
+        self.offsets = self.topology.offsets
+        self.edges = self.topology.edges
+        self.shifts = self.topology.shifts
+        self.edge_orders = self.topology.edge_orders
+        self.edge_starts = self.topology.edge_starts
         full_norb = idp.full_basis_norb
         self.nodes = node_features.new_zeros(
             (len(atom_types), full_norb, full_norb)
@@ -105,8 +104,48 @@ class LocalBlocks:
                 column_start += column_size
             row_start += row_size
 
+    def _prepare_expansion(self, idp):
+        size = idp.full_basis_norb
+        mapping = torch.zeros((size, size), dtype=torch.long)
+        factors = torch.zeros((size, size), dtype=self.nodes.dtype)
+        row_start = 0
+        for row_index, row_orbital in enumerate(idp.full_basis):
+            row_size = 2 * anglrMId[re.findall(r"[a-zA-Z]+", row_orbital)[0]] + 1
+            column_start = 0
+            for column_index, column_orbital in enumerate(idp.full_basis):
+                column_size = (
+                    2 * anglrMId[re.findall(r"[a-zA-Z]+", column_orbital)[0]] + 1
+                )
+                if row_index <= column_index:
+                    pair_slice = idp.orbpair_maps[row_orbital + "-" + column_orbital]
+                    section = (slice(row_start, row_start + row_size),
+                               slice(column_start, column_start + column_size))
+                    mapping[section] = torch.arange(pair_slice.start, pair_slice.stop).reshape(row_size, column_size)
+                    factors[section] = (0.5 if row_orbital == column_orbital else 1.0)
+                column_start += column_size
+            row_start += row_size
+        self.feature_mapping = mapping.to(self.nodes.device)
+        self.feature_factors = factors.to(self.nodes.device)
+        
+    def expand_nodes(self, indices):
+        return self.nodes[indices[:, None, None], self.feature_mapping] * self.feature_factors
+
+    def expand_edges(self, indices):
+        return self.hoppings[indices[:, None, None], self.feature_mapping] * self.feature_factors
+
     def contributions(self):
         """Yield unhermitianized onsite/edge blocks in HR2HK order."""
+        if isinstance(self.topology, CudaTopology):
+            for atom_index in range(len(self.nodes)):
+                indices = torch.tensor([atom_index], device=self.nodes.device)
+                mask = self.topology.type_masks[self.topology.atom_types[atom_index]]
+                yield atom_index, atom_index, self.expand_nodes(indices)[0][mask][:, mask], None
+            for edge_index in range(len(self.hoppings)):
+                source, target = self.topology.edges[:, edge_index].tolist()
+                indices = torch.tensor([edge_index], device=self.nodes.device)
+                masks = self.topology.type_masks[self.topology.atom_types[[source, target]]]
+                yield source, target, self.expand_edges(indices)[0][masks[0]][:, masks[1]], edge_index
+            return
         for atom_index, block in enumerate(self.nodes):
             mask = self.masks[atom_index]
             yield atom_index, atom_index, block[mask][:, mask], None
@@ -124,6 +163,22 @@ class LocalBlocks:
 
     def pairs(self, kpoint, atoms=None, phases=None):
         """Yield selected atom rows with only one reduced row resident."""
+        if isinstance(self.topology, CudaTopology):
+            if phases is None:
+                phases = self.phases(kpoint)
+            if atoms is None:
+                atoms = range(len(self.nodes))
+            for source in atoms:
+                start, stop = self.topology.pair_range(source, source + 1)
+                targets = self.topology.targets[start:stop].tolist()
+                position = 0
+                for _, _, _, values in self.topology.batches(self, phases, start, stop):
+                    for value in values:
+                        target = targets[position]
+                        masks = self.topology.type_masks[self.topology.atom_types[[source, target]]]
+                        yield source, target, value[masks[0]][:, masks[1]]
+                        position += 1
+            return
         complex_dtype = (
             torch.complex64
             if self.nodes.dtype == torch.float32
@@ -169,7 +224,7 @@ class LocalBlocks:
         nodes = self.nodes.numpy()
         hoppings = self.hoppings.numpy()
         phases = phases.numpy()
-        masks = [mask.numpy() for mask in self.masks]
+        masks = self.topology.cpu_masks
         for source in atoms:
             mask = masks[source]
             onsite = nodes[source][mask][:, mask].astype(phases.dtype)
@@ -391,12 +446,58 @@ def _write_complex(group, name, value):
 
 
 def _build_profiles(local_blocks, kpoints, offsets, device_window, lead_windows):
+    active = [local for local in local_blocks if local is not None]
+    if active and isinstance(active[0].topology, CudaTopology):
+        if torch.is_grad_enabled():
+            raise RuntimeError("CUDA planned BTD requires no_grad mode.")
+        if not all(local.topology is active[0].topology for local in active):
+            raise ValueError("CUDA H/S must share a topology.")
+        return active[0].topology.profiles(active, kpoints, device_window, lead_windows)
     size = int(device_window[1] - device_window[0])
     edge = np.arange(1, size + 1)
     reverse_edge = edge.copy()
 
     contact_extents = {"lead_L": 1, "lead_R": 1}
 
+    active = [local for local in local_blocks if local is not None]
+    if (
+        active
+        and active[0].nodes.device.type == "cpu"
+        and not torch.is_grad_enabled()
+        and all(local.topology is active[0].topology for local in active)
+    ):
+        pair_plan = active[0].topology.cpu(active[0].nodes.shape[-1])
+        rows, columns = pair_plan.rows, pair_plan.columns
+        device_rows = (rows >= device_window[0]) & (rows < device_window[1])
+        inside = device_rows & (columns >= device_window[0]) & (columns < device_window[1])
+        for kpoint in kpoints:
+            phases = active[0].phases(kpoint)
+            for local in active:
+                values = pair_plan.evaluate(local, phases)
+                nonzero = pair_plan.nonzero(values)
+                selected = inside & nonzero
+                row_indices = rows[selected] - device_window[0]
+                column_indices = columns[selected] - device_window[0]
+                np.maximum.at(edge, row_indices, column_indices + 1)
+                np.maximum.at(reverse_edge, size - 1 - row_indices, size - column_indices)
+                for tab, window in lead_windows.items():
+                    selected = (
+                        device_rows
+                        & nonzero
+                        & (columns >= window[0])
+                        & (columns < window[1])
+                    )
+                    if selected.any():
+                        depth = (
+                            rows[selected].max() - device_window[0] + 1
+                            if tab == "lead_L"
+                            else device_window[1] - rows[selected].min()
+                        )
+                        contact_extents[tab] = max(
+                            contact_extents[tab], int(depth)
+                        )
+                del values
+        return edge, reverse_edge, contact_extents
 
     for local in local_blocks:
         if local is None:
@@ -463,8 +564,31 @@ def write_block_rows(
     lead_windows,
     factor=1.0,
     orthogonal=False,
+    phases=None,
+    plan=None,
 ):
     """Write one diagonal and at most two neighboring blocks at a time."""
+
+    if isinstance(local.topology, CudaTopology):
+        if torch.is_grad_enabled():
+            raise RuntimeError("CUDA planned BTD requires no_grad mode.")
+        if plan is None:
+            plan = CudaAssemblyPlan(local.topology, device_window, blocks, lead_windows)
+        return plan.write(
+            cache, prefix, local, local.phases(kpoint) if phases is None else phases,
+            k_index, factor, orthogonal, _write_complex
+        )
+    if plan is not None:
+        if local.nodes.device.type != "cpu" or torch.is_grad_enabled():
+            raise RuntimeError("Planned BTD assembly requires CPU no_grad mode.")
+        if orthogonal:
+            values = np.empty(0, dtype=np.complex64 if local.nodes.dtype == torch.float32 else np.complex128)
+        else:
+            values = plan.pairs.evaluate(
+                local, local.phases(kpoint) if phases is None else phases
+            )
+        return plan.write(cache, prefix, values, k_index, factor, orthogonal, _write_complex)
+
 
     bounds = np.cumsum([device_window[0]] + list(blocks))
 
@@ -476,6 +600,8 @@ def write_block_rows(
 
 
     kwargs = dict(dtype=dtype, device=local.nodes.device)
+    if not orthogonal and phases is None:
+        phases = local.phases(kpoint)
     phases = None if orthogonal else local.phases(kpoint)
     maximum = max(blocks)
     workspace = torch.empty((3, maximum, maximum), **kwargs)
@@ -667,7 +793,7 @@ def initialize_direct(owner, kpoints, structure_leads):
 
     local_h = LocalBlocks(data, owner.model.idp)
     local_s = (
-        LocalBlocks(data, owner.model.idp, overlap=True)
+        LocalBlocks(data, owner.model.idp, overlap=True, topology=local_h.topology)
         if owner.overlap
         else None
     )
@@ -748,6 +874,14 @@ def initialize_direct(owner, kpoints, structure_leads):
         estimated_mib,
     )
     owner.subblocks = blocks
+    assembly_plan = (
+        AssemblyPlan(
+            local_h.topology.cpu(local_h.nodes.shape[-1]),
+            device_window, blocks, lead_windows,
+        )
+        if local_h.nodes.device.type == "cpu"
+        else CudaAssemblyPlan(local_h.topology, device_window, blocks, lead_windows)
+    )
 
     from dptb.nn.hr2hk import HR2HK
 
@@ -780,6 +914,7 @@ def initialize_direct(owner, kpoints, structure_leads):
             cache.create_group(name)
 
         for k_index, kpoint in enumerate(kpoints):
+            phases = local_h.phases(kpoint)
             h_contacts, h_principal = write_block_rows(
                 cache,
                 "h",
@@ -790,6 +925,8 @@ def initialize_direct(owner, kpoints, structure_leads):
                 blocks,
                 lead_windows,
                 factor=owner.h_factor,
+                phases=phases,
+                plan=assembly_plan
             )
             s_contacts, s_principal = write_block_rows(
                 cache,
@@ -801,6 +938,8 @@ def initialize_direct(owner, kpoints, structure_leads):
                 blocks,
                 lead_windows,
                 orthogonal=local_s is None,
+                phases=phases,
+                plan=assembly_plan,
             )
 
             for tab, structure in structure_leads.items():
