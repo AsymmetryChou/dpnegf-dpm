@@ -71,5 +71,6 @@
     "AtomicData_options": {
         "r_max": 2.0
     },
+    "device": "cpu",
     "structure": "./chain.vasp"
 }
