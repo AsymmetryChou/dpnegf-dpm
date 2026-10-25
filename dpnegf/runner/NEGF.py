@@ -243,7 +243,7 @@ class NEGF(object):
         if len(self.wk)<10:
             log.info(msg="k-points: {0}".format(self.kpoints))
             log.info(msg="k-points weights: {0}".format(self.wk))
-        log.info(msg="--------------------------------")
+        log.info(msg="================================")
 
         self.unit = unit
         self.scf = scf
@@ -264,6 +264,9 @@ class NEGF(object):
         AtomicData_options = self.update_atomicdata_options(model,AtomicData_options)
 
         # computing the hamiltonian
+        log.info(msg="------------ Hamiltonian Initialization -------------")
+        log.info(msg="Hamiltonian initialization device: {0}".format(self.init_device))
+
         output_path = os.path.join(
             self.results_path, "profile_report_ham_init.html"
         )
@@ -303,7 +306,7 @@ class NEGF(object):
         self.doped_region = [self.poisson_options[i] for i in self.poisson_options if i.startswith("doped")]
 
 
-
+        log.info(msg="=================================================")
         log.info(msg="-------------Fermi level calculation-------------")
         e_fermi = {}; chemiPot = {}
         input_e_fermi = self.e_fermi
