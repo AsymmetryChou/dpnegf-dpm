@@ -542,8 +542,9 @@ def run_options():
     doc_task = "Which transport task to run and its detailed options. See `task_options` below."
     doc_structure = "Path to the structure file (xyz/vasp/etc.). Overrides the CLI `--structure` flag when set."
     doc_gui = "Whether to launch the GUI. Default: False."
-    doc_device = ("The torch device used to build the Hamiltonian and run the calculation. "
-                  "Choose 'cpu' or 'cuda[:int]'. Default: None (use the device stored in the model ckpt).")
+    doc_device = ("The torch device for model construction, Hamiltonian initialization and"
+                  "lead electronic structure. Choose 'cpu' or 'cuda[:int]'."
+                  "Default: None (use the device stored in the model ckpt). RGF uses rgf_options.device.")
     doc_dtype = ("Floating precision used at build time. 'float32' or 'float64'. "
                   "Default: None (use the dtype stored in the model ckpt).")
     doc_pbc = ("Overall periodic boundary condition of the input structure. "

@@ -872,7 +872,7 @@ class NEGFHamiltonianInit(object):
         
         return hd, hu, hl, sd, su, sl, subblocks
 
-    def get_hs_device(self, kpoint=[0,0,0], V=None, block_tridiagonal=False, only_subblocks=False):
+    def get_hs_device(self, kpoint=[0,0,0], V=None, block_tridiagonal=False, only_subblocks=False, device=None):
         """ get the device Hamiltonian and overlap matrix at a specific kpoint
 
         In diagonalization mode, the Hamiltonian and overlap matrix are block tridiagonalized,
@@ -883,12 +883,15 @@ class NEGFHamiltonianInit(object):
             kpoints: k-points in the Brillouin zone with three coordinates (kx, ky, kz)
             V: voltage bias
             block_tridiagonal:  a boolean flag that shows whether Hamiltonian has been diagonalized or not
-        
+            device: output device; defaults to the initialization device.
         Returns:
             if not diagonalized, return the whole Hamiltonian and Overlap HD-V*SD, SD
             if diagonalized, return the block tridiagonalized Hamiltonian and Overlap component hd, hu, hl,
             sd, su, sl.
         """
+        target_device = None if only_subblocks else (
+            self.torch_device if device is None else torch.device(device)
+        )
         if self.saved_HS_path is None:
             self.saved_HS_path = self.results_path
         
@@ -915,7 +918,7 @@ class NEGFHamiltonianInit(object):
                 if block_tridiagonal:
                     from dpnegf.utils.hs_cache import read_btd_kpoint
                     return read_btd_kpoint(
-                        f, kpoint, V, self.torch_device
+                        f, kpoint, V, target_device
                     )
                 from dpnegf.utils.hs_cache import find_kpoint_index
                 ik = find_kpoint_index(f["kpoints"][()], kpoint)
@@ -924,7 +927,7 @@ class NEGFHamiltonianInit(object):
 
         elif os.path.exists(HS_device_path_pth):
             # log.info(msg="The HS_device.pth exists in the saved path {}.".format(self.saved_HS_path))
-            HS_device = torch.load(HS_device_path_pth)
+            HS_device = torch.load(HS_device_path_pth, map_location="cpu")
             if only_subblocks:
                 if "subblocks" not in HS_device:
                     log.warning(msg=" 'subblocks' might not be saved in the HS_device.pth for old version.")
@@ -948,13 +951,13 @@ class NEGFHamiltonianInit(object):
         
         if block_tridiagonal:
             # move blocks onto torch_device so downstream RGF runs on the chosen device.
-            hd_k = [b.to(self.torch_device) for b in hd_k]
-            sd_k = [b.to(self.torch_device) for b in sd_k]
-            hl_k = [b.to(self.torch_device) for b in hl_k]
-            su_k = [b.to(self.torch_device) for b in su_k]
-            sl_k = [b.to(self.torch_device) for b in sl_k]
-            hu_k = [b.to(self.torch_device) for b in hu_k]
-            V = torch.as_tensor(V).to(self.torch_device)
+            hd_k = [b.to(target_device) for b in hd_k]
+            sd_k = [b.to(target_device) for b in sd_k]
+            hl_k = [b.to(target_device) for b in hl_k]
+            su_k = [b.to(target_device) for b in su_k]
+            sl_k = [b.to(target_device) for b in sl_k]
+            hu_k = [b.to(target_device) for b in hu_k]
+            V = torch.as_tensor(0 if V is None else V, device = target_device)
 
             if V.shape == torch.Size([]):
                 allorb = sum([hd_k[i].shape[0] for i in range(len(hd_k))])
@@ -973,9 +976,9 @@ class NEGFHamiltonianInit(object):
 
             return hd_k , sd_k, hl_k , su_k, sl_k, hu_k
         else:
-            HD_k = HD_k.to(self.torch_device)
-            SD_k = SD_k.to(self.torch_device)
-            V = torch.as_tensor(V).to(self.torch_device)
+            HD_k = HD_k.to(target_device)
+            SD_k = SD_k.to(target_device)
+            V = torch.as_tensor(0 if V is None else V, device = target_device)
             return HD_k - V*SD_k, SD_k, [], [], [], []
     
     @staticmethod

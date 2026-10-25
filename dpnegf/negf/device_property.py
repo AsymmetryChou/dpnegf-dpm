@@ -220,7 +220,9 @@ class DeviceProperty(object):
             self.newV_flag = True  # for the first time to run cal_green_function in Poisson-NEGF SCF
 
         if (not (hasattr(self, "hd") and hasattr(self, "sd"))) or (self.newK_flag or self.newV_flag):
-            self.hd, self.sd, self.hl, self.su, self.sl, self.hu = self.hamiltonian.get_hs_device(self.kpoint, self.V, block_tridiagonal)
+            self.hd, self.sd, self.hl, self.su, self.sl, self.hu = self.hamiltonian.get_hs_device(
+                self.kpoint, self.V, block_tridiagonal, device=self.rgf_device
+            )
             # TODO: if all blocks transferred to GPU, OOM may happen for large systems. 
             # Optimization should be implemented here.
             self.hd = [b.to(self.rgf_device) for b in self.hd]
@@ -439,7 +441,7 @@ class DeviceProperty(object):
         #TODO: transfer cal_dos to static method for any k and energy
         if (not(hasattr(self, "hd") and hasattr(self, "sd"))) or (self.newK_flag or self.newV_flag):
             self.hd, self.sd, self.hl, self.su, self.sl, self.hu = \
-                self.hamiltonian.get_hs_device(self.kpoint, self.V, self.block_tridiagonal)
+                self.hamiltonian.get_hs_device(self.kpoint, self.V, self.block_tridiagonal, device=self.rgf_device)
             # defensive .to(self.device) in case the blocks came back from a cached/legacy path on CPU.
             self.hd = [b.to(self.rgf_device) for b in self.hd]
             self.sd = [b.to(self.rgf_device) for b in self.sd]
@@ -511,7 +513,9 @@ class DeviceProperty(object):
         
         na = len(self.norbs_per_atom)
         local_current = torch.zeros(na, na, device=self.rgf_device)
-        hd = self.hamiltonian.get_hs_device(kpoint=self.kpoint, V=self.V, block_tridiagonal=self.block_tridiagonal)[0][0]
+        hd = self.hamiltonian.get_hs_device(
+            kpoint=self.kpoint, V=self.V, block_tridiagonal=self.block_tridiagonal, device=self.rgf_device
+            )[0][0]
         hd = hd.to(self.rgf_device)  # defensive .to(self.device) in case the block came back from a cached/legacy path on CPU.
 
         for i in range(na):
