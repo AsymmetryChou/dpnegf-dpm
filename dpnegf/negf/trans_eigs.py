@@ -182,12 +182,13 @@ class _ContactSolver:
     """Block elimination, keeping factors only when channels are requested."""
     def __init__(self, context, incoming, retain):
         self.c = context
-        self.reverse = incoming == "right"
+        self.incoming = incoming
+        self.reverse = incoming == "right" and context.gr_left is None
         self.order = list(range(len(context.hd)))
         if self.reverse:
             self.order.reverse()
-        self.in_idx = context.right_indices if self.reverse else context.left_indices
-        self.out_idx = context.left_indices if self.reverse else context.right_indices
+        self.in_idx = context.right_indices if incoming == "right" else context.left_indices
+        self.out_idx = context.left_indices if incoming == "right" else context.right_indices
         self.retain = retain
         self.factors = []
         self.transfers = []
@@ -204,6 +205,8 @@ class _ContactSolver:
 
     def solve(self, contact_source, *, blocks=False):
         c = self.c
+        if c.gr_left is not None:
+            return self._solve_gr_left(contact_source, blocks=blocks)
         previous = None
         transfer = None
         responses = []
@@ -219,9 +222,6 @@ class _ContactSolver:
                 factor, pivots = self.factors[i]
                 response = torch.linalg.lu_solve(factor, pivots, rhs)
                 transfer = self.transfers[i] if i < len(self.order) - 1 else None
-            elif c.gr_left is not None and not self.reverse:
-                response = c.gr_left[q] @ rhs
-                transfer = c.gr_left[q] @ self.upper(i) if i < len(self.order) - 1 else None
             else:
                 d = c.diagonal(q)
                 if i:
@@ -239,12 +239,31 @@ class _ContactSolver:
         if not blocks:
             return previous[self.out_idx]
         for i in range(len(responses) - 2, -1, -1):
-            if self.transfers:
-                transfer = self.transfers[i]
-            else:
-                transfer = c.gr_left[self.order[i]] @ self.upper(i)
+            transfer = self.transfers[i]
             responses[i] = responses[i] - transfer @ responses[i + 1]
         return list(reversed(responses)) if self.reverse else responses
+
+    def _solve_gr_left(self, contact_source, *, blocks):
+        """Solve multiple RHS using the existing left Schur inverses in both directions."""
+        c = self.c
+        source_block = 0 if self.incoming == "left" else len(c.hd) - 1
+        responses = []
+        previous = None
+        for i, h in enumerate(c.hd):
+            rhs = h.new_zeros((len(h), contact_source.shape[1]))
+            if i == source_block:
+                rhs[self.in_idx] = contact_source
+            if i:
+                rhs -= self.lower(i) @ previous
+            previous = c.gr_left[i] @ rhs
+            if blocks or self.incoming == "right":
+                responses.append(previous)
+        if not blocks and self.incoming == "left":
+            return previous[self.out_idx]
+        for i in range(len(responses) - 2, -1, -1):
+            # Associate products with the thin RHS, avoiding square transfer matrices.
+            responses[i] = responses[i] - c.gr_left[i] @ (self.upper(i) @ responses[i + 1])
+        return responses if blocks else responses[0][self.out_idx]
 
 
 def _compute(context, *, incoming="left", channels=False, channel_indices=None,
