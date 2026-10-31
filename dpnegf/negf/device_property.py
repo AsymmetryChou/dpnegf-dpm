@@ -1,3 +1,4 @@
+import copy
 from dpnegf.negf.recursive_green_cal import (
     recursive_gf,
     recursive_gf_transmission_only,
@@ -225,6 +226,7 @@ class DeviceProperty(object):
             self.hd, self.sd, self.hl, self.su, self.sl, self.hu = self.hamiltonian.get_hs_device(
                 self.kpoint, self.V, block_tridiagonal, device=self.rgf_device
             )
+            self._capture_orbital_mapping()
             # TODO: if all blocks transferred to GPU, OOM may happen for large systems. 
             # Optimization should be implemented here.
             self.hd = [b.to(self.rgf_device) for b in self.hd]
@@ -315,6 +317,7 @@ class DeviceProperty(object):
         self.greenfuncs = green_funcs
         if need_trans_eigs:
             self._trans_eigs_state = {
+                "orbital_mapping": copy.deepcopy(self._orbital_mapping_snapshot),
                 "energies": energy.clone(), "eta": eta_device,
                 "left_se": seL.clone(), "right_se": seR.clone(),
                 "E_ref": self.E_ref.clone() if torch.is_tensor(self.E_ref) else self.E_ref,
@@ -326,11 +329,27 @@ class DeviceProperty(object):
 
         # self.green = update_temp_file(update_fn=fn, file_path=GFpath, ee=ee, tags=tags, info="Computing Green's Function")
 
+    def _capture_orbital_mapping(self):
+        """Keep provenance with the H/S blocks owned by this device."""
+        from dpnegf.utils.orbital_mapping import validate_orbital_mapping
+        getter = getattr(self.hamiltonian, "get_orbital_map", None)
+        self._orbital_mapping_snapshot = copy.deepcopy(
+            getter() if getter is not None else validate_orbital_mapping(
+                None, None, [b.shape[0] for b in self.hd], "unspecified"))
+
     def cal_transmission_eigs(self, *, channels=False, **options):
         """Return one result per energy, reusing the current full-RGF blocks.
 
         Call cal_green_function(need_trans_eigs=True) first. Spectra are kept
         separate for every k/energy block; no spin or k weight is applied.
+        """
+        return list(self.iter_transmission_eigs(channels=channels, **options))
+
+    def iter_transmission_eigs(self, *, channels=False, **options):
+        """Yield one energy result at a time without retaining earlier results.
+
+        Consumers should transfer/save and release each result before advancing.
+        The RGF energy batch itself stays resident until release_greenfuncs().
         """
         from dpnegf.negf.trans_eigs import (
             TransportContext, transmission_eigenvalues, transmission_eigenchannels,
@@ -341,7 +360,6 @@ class DeviceProperty(object):
         energies, eta = state["energies"], state["eta"]
         se_l, se_r = state["left_se"], state["right_se"]
         batched = se_l.ndim == 3
-        results = []
         for i, energy in enumerate(energies):
             connected = [g[i] if batched else g for g in self.gr_left]
             context = TransportContext(
@@ -351,13 +369,16 @@ class DeviceProperty(object):
                 right_se=se_r[i] if batched else se_r,
                 eta_device=eta, E_ref=state["E_ref"], kpoint=state["kpoint"],
                 eta_lead=getattr(self, "_trans_eigs_eta_lead", None),
-                orbital_map=getattr(self.hamiltonian, "device_orbital_map", None),
+                orbital_map=state["orbital_mapping"]["orbital_map"],
+                orbital_map_known=state["orbital_mapping"]["status"] == "known",
                 gr_left=connected,
                 g_trans=self.greenfuncs["g_trans"][i] if batched else self.greenfuncs["g_trans"],
             )
             function = transmission_eigenchannels if channels else transmission_eigenvalues
-            results.append(function(context, **options))
-        return results
+            result = function(context, **options)
+            result["orbital_mapping"] = copy.deepcopy(state["orbital_mapping"])
+            yield result
+            del result
 
     def release_greenfuncs(self, empty_cache: bool=False):
         '''Drop the Green's-function dict so the underlying rgf_device storage
@@ -488,6 +509,7 @@ class DeviceProperty(object):
         if (not(hasattr(self, "hd") and hasattr(self, "sd"))) or (self.newK_flag or self.newV_flag):
             self.hd, self.sd, self.hl, self.su, self.sl, self.hu = \
                 self.hamiltonian.get_hs_device(self.kpoint, self.V, self.block_tridiagonal, device=self.rgf_device)
+            self._capture_orbital_mapping()
             # defensive .to(self.device) in case the blocks came back from a cached/legacy path on CPU.
             self.hd = [b.to(self.rgf_device) for b in self.hd]
             self.sd = [b.to(self.rgf_device) for b in self.sd]

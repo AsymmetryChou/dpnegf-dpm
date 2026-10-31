@@ -855,18 +855,19 @@ class NEGF(object):
         )
         return b
 
-    def _store_trans_eigs(self, k):
-        """Keep ragged per-energy spectra (contact rank may change with energy)."""
+    def _store_trans_eigs(self, k, ik):
+        """Save each channel energy immediately; keep only a file index in out."""
         options = dict(self.trans_eigs_options)
         if not self.out_trans_eigchannel:
             for key in ("n_channels", "channel_indices", "return_format"):
                 options.pop(key, None)
         self.deviceprop._trans_eigs_eta_lead = self.eta_lead
-        results = self.deviceprop.cal_transmission_eigs(
+        results = self.deviceprop.iter_transmission_eigs(
             channels=self.out_trans_eigchannel, **options)
         def cpu(value):
             if torch.is_tensor(value):
-                return value.detach().cpu()
+                # Own the storage, including scalar views into an energy batch.
+                return value.detach().to(device="cpu", copy=True)
             if isinstance(value, dict):
                 return {key: cpu(item) for key, item in value.items()}
             if isinstance(value, list):
@@ -879,13 +880,24 @@ class NEGF(object):
                           if key not in ("coefficients", "selected_indices", "tau_selected")}
                 self.out.setdefault("trans_eigvals", {}).setdefault(str(k), []).append(values)
             if self.out_trans_eigchannel:
-                result["orbital_atoms"] = torch.repeat_interleave(
-                    torch.arange(len(self.negf_hamiltonian.device_original_norbs)),
-                    torch.tensor(self.negf_hamiltonian.device_original_norbs))
-                result["orbital_atoms_order"] = "original"
-                result["device_atom_start"] = self.negf_hamiltonian.device_id[0]
-                result["block_atom_map"] = torch.as_tensor(self.negf_hamiltonian.device_atom_map)
-                self.out.setdefault("trans_eigchannel", {}).setdefault(str(k), []).append(result)
+                mapping = result.get("orbital_mapping", {"status": "unknown"})
+                known = mapping["status"] == "known"
+                result["orbital_atoms"] = (torch.repeat_interleave(
+                    torch.arange(len(mapping["atom_norbs"])),
+                    torch.tensor(mapping["atom_norbs"])) if known else None)
+                result["orbital_atoms_order"] = "original" if known else None
+                result["device_atom_start"] = mapping["device_id"][0] if known else None
+                result["block_atom_map"] = torch.tensor(mapping["atom_map"]) if known else None
+                records = self.out.setdefault("trans_eigchannel", {}).setdefault(str(k), [])
+                relative = os.path.join("trans_eigchannel", f"k{ik:06d}", f"e{len(records):08d}.pth")
+                target = os.path.join(self.results_path, relative)
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                torch.save(result, target + ".tmp")
+                os.replace(target + ".tmp", target)
+                records.append({"energy": result["energy"], "kpoint": result["kpoint"],
+                                "path": relative})
+            # Release coefficients before requesting the next energy from the iterator.
+            del result
 
     def negf_compute(self,scf_require=False,Vbias=None):
         
@@ -1007,7 +1019,7 @@ class NEGF(object):
                                 )
 
                             if self.need_trans_eigs:
-                                self._store_trans_eigs(k)
+                                self._store_trans_eigs(k, ik)
                             if self.out_dos:
                                 self.out.setdefault('DOS', {}).setdefault(str(k), []).append(self.compute_DOS(k))
                             if self.out_tc or self.out_current_nscf:
@@ -1071,7 +1083,7 @@ class NEGF(object):
                                     )
 
                                 if self.need_trans_eigs:
-                                    self._store_trans_eigs(k)
+                                    self._store_trans_eigs(k, ik)
                                 if self.out_dos:
                                     self.out.setdefault('DOS', {}).setdefault(str(k), []).append(self.compute_DOS(k).reshape(-1).cpu())
                                 if self.out_tc or self.out_current_nscf:

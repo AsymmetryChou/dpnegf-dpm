@@ -1,3 +1,4 @@
+import copy
 import os
 import h5py
 import logging
@@ -152,6 +153,17 @@ class NEGFHamiltonianInit(object):
             np.arange(offsets[i], offsets[i + 1]) for i in atom_order
         ])
         self.device_atom_map = np.asarray(atom_order)
+        self._input_orbital_mapping = {
+            "version": 1, "orbital_map": self.device_orbital_map.tolist(),
+            "inverse_orbital_map": np.argsort(self.device_orbital_map).tolist(),
+            "atom_map": self.device_atom_map.tolist(), "atom_norbs": original_norbs,
+            "atomic_numbers": device_atoms.numbers.tolist(),
+            "positions": device_atoms.positions.tolist(), "device_id": list(self.device_id),
+            "basis": {"convention": "dptb-OrbitalMapper-real-spherical-v1",
+                      "basis": copy.deepcopy(model.idp.basis),
+                      "full_basis": list(model.idp.full_basis)},
+        }
+        self._loaded_orbital_mapping = None
 
         # sort the atoms in device region lexicographically
         if block_tridiagonal:
@@ -558,6 +570,8 @@ class NEGFHamiltonianInit(object):
 
         device_file = os.path.join(self.results_path, "HS_device.h5")
         with h5py.File(device_file, "w") as f:
+            from dpnegf.utils.orbital_mapping import write_orbital_mapping
+            write_orbital_mapping(f, self._input_orbital_mapping)
             for key, items in HS_device.items():
                 if key in ["kpoints", "subblocks"]:
                     f.create_dataset(f"{key}", data=np.array(items))
@@ -903,9 +917,12 @@ class NEGFHamiltonianInit(object):
             if diagonalized, return the block tridiagonalized Hamiltonian and Overlap component hd, hu, hl,
             sd, su, sl.
         """
+        if not only_subblocks:
+            self._loaded_orbital_mapping = None
         target_device = None if only_subblocks else (
             self.torch_device if device is None else torch.device(device)
         )
+        from dpnegf.utils.orbital_mapping import read_orbital_mapping
         if self.saved_HS_path is None:
             self.saved_HS_path = self.results_path
         
@@ -931,17 +948,21 @@ class NEGFHamiltonianInit(object):
 
                 if block_tridiagonal:
                     from dpnegf.utils.hs_cache import read_btd_kpoint
-                    return read_btd_kpoint(
-                        f, kpoint, V, target_device
-                    )
+                    parts = read_btd_kpoint(f, kpoint, V, target_device)
+                    self._capture_orbital_mapping(read_orbital_mapping(f), parts,
+                                                  f["subblocks"][()], HS_device_path_h5)
+                    return parts
                 from dpnegf.utils.hs_cache import find_kpoint_index
                 ik = find_kpoint_index(f["kpoints"][()], kpoint)
                 HD_k = torch.from_numpy(f["HD"][ik])
                 SD_k = torch.from_numpy(f["SD"][ik])
+                mapping = read_orbital_mapping(f)
+                declared_blocks = f["subblocks"][()] if "subblocks" in f else [HD_k.shape[-1]]
+                source = HS_device_path_h5
 
         elif os.path.exists(HS_device_path_pth):
             # log.info(msg="The HS_device.pth exists in the saved path {}.".format(self.saved_HS_path))
-            HS_device = torch.load(HS_device_path_pth, map_location="cpu")
+            HS_device = torch.load(HS_device_path_pth, map_location="cpu", weights_only=False)
             if only_subblocks:
                 if "subblocks" not in HS_device:
                     log.warning(msg=" 'subblocks' might not be saved in the HS_device.pth for old version.")
@@ -950,6 +971,8 @@ class NEGFHamiltonianInit(object):
                 return HS_device["subblocks"]
 
             ik = self._find_kpoint_index(HS_device["kpoints"], kpoint)
+            mapping = read_orbital_mapping(HS_device)
+            source = HS_device_path_pth
             if block_tridiagonal:
                 hd_k, sd_k, hl_k, su_k, sl_k, hu_k = (
                     HS_device["hd"][ik], HS_device["sd"][ik],
@@ -958,12 +981,17 @@ class NEGFHamiltonianInit(object):
                 )
             else:
                 HD_k, SD_k = HS_device["HD"][ik], HS_device["SD"][ik]
+            declared_blocks = HS_device.get(
+                "subblocks", [b.shape[0] for b in hd_k] if block_tridiagonal
+                else [HD_k.shape[-1]])
         else:
             raise FileNotFoundError(f"Neither HS_device.pth nor HS_device.h5 found in {self.saved_HS_path}. " )
 
             
         
         if block_tridiagonal:
+            self._capture_orbital_mapping(mapping, (hd_k, sd_k, hl_k, su_k, sl_k, hu_k),
+                                          declared_blocks, source)
             # move blocks onto torch_device so downstream RGF runs on the chosen device.
             hd_k = [b.to(target_device) for b in hd_k]
             sd_k = [b.to(target_device) for b in sd_k]
@@ -990,10 +1018,32 @@ class NEGFHamiltonianInit(object):
 
             return hd_k , sd_k, hl_k , su_k, sl_k, hu_k
         else:
+            self._capture_orbital_mapping(mapping, (HD_k, SD_k, [], [], [], []),
+                                          declared_blocks, source)
             HD_k = HD_k.to(target_device)
             SD_k = SD_k.to(target_device)
             V = torch.as_tensor(0 if V is None else V, device = target_device)
             return HD_k - V*SD_k, SD_k, [], [], [], []
+
+    def _capture_orbital_mapping(self, metadata, parts, subblocks, source):
+        from dpnegf.utils.orbital_mapping import validate_hs_layout
+        self._loaded_orbital_mapping = None
+        hd, sd, *rest = parts
+        if torch.is_tensor(hd) and hd.ndim == 2:
+            parts = ([hd], [sd], *rest)
+        blocks = validate_hs_layout(parts, subblocks)
+        self._loaded_orbital_mapping = (copy.deepcopy(metadata), blocks, os.path.abspath(source))
+        self.get_orbital_map()
+
+    def get_orbital_map(self):
+        """Validate mapping from the actual loaded H/S cache and return a snapshot."""
+        from dpnegf.utils.orbital_mapping import validate_orbital_mapping
+        loaded = getattr(self, "_loaded_orbital_mapping", None)
+        if loaded is None:
+            raise RuntimeError("Load device H/S before requesting its orbital mapping")
+        metadata, blocks, source = loaded
+        return validate_orbital_mapping(metadata, getattr(self, "_input_orbital_mapping", None),
+                                        blocks, source)
     
     @staticmethod
     def _find_kpoint_index(kpoints, kpoint):

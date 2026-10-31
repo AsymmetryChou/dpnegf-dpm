@@ -309,9 +309,18 @@ def test_input_json_runner(tmp_path, outputs, btd, chunk):
             continue
         records = result[flag][k]
         assert len(records) == 3
-        for record in records:
+        for entry in records:
+            record = entry
+            if flag == 'trans_eigchannel':
+                assert set(entry) == {'energy', 'kpoint', 'path'}
+                record = torch.load(tmp_path / 'out/results' / entry['path'], weights_only=False)
+                torch.testing.assert_close(record['energy'], entry['energy'])
             assert abs(record['tau_all'][0] - 1) < 2e-5
             assert record['incoming'] == 'left'
+            assert record['orbital_mapping']['status'] == 'known'
+            assert record['orbital_mapping_status'] == 'known'
+            assert record['orbital_mapping']['basis']['convention'] == 'dptb-OrbitalMapper-real-spherical-v1'
+            torch.testing.assert_close(record['inverse_orbital_map'], record['orbital_map'].argsort())
             if flag == 'trans_eigchannel':
                 assert record['coefficients'].shape[1] == 1
                 assert record['basis_order'] == 'original'
@@ -321,6 +330,46 @@ def test_input_json_runner(tmp_path, outputs, btd, chunk):
     if outputs.get('tc'):
         torch.testing.assert_close(torch.stack([r['T_spectral'] for r in result['trans_eigvals'][k]]), result['T_k'][k])
     assert 'transmission-only recursive' not in (tmp_path / 'run.log').read_text()
+
+
+def test_runner_streams_saves_and_releases_each_energy(tmp_path, monkeypatch):
+    import weakref
+    from types import SimpleNamespace
+    from dpnegf.runner.NEGF import NEGF
+    raw_refs, saved_refs = [], []
+    def make_record(i):
+        coefficients = torch.ones(4, 1, dtype=DT) * (i + 1)
+        raw_refs.append(weakref.ref(coefficients))
+        return dict(energy=torch.tensor(float(i)), kpoint=torch.zeros(3),
+                    coefficients=coefficients, tau_all=torch.ones(1),
+                    selected_indices=torch.tensor([0]), tau_selected=torch.ones(1))
+    def iterator(**options):
+        for i in range(3):
+            # The previous energy must already be on disk with both copies released.
+            assert len(list(tmp_path.rglob('*.pth'))) == i
+            assert all(ref() is None for ref in raw_refs + saved_refs)
+            yield make_record(i)
+    original_save = torch.save
+    def save(record, path):
+        assert record['coefficients'].device.type == 'cpu'
+        assert record['orbital_atoms'] is None
+        assert record['block_atom_map'] is None
+        saved_refs.append(weakref.ref(record['coefficients']))
+        original_save(record, path)
+    monkeypatch.setattr(torch, 'save', save)
+    runner = NEGF.__new__(NEGF)
+    runner.trans_eigs_options = {'n_channels': 1}
+    runner.out_trans_eigvals = runner.out_trans_eigchannel = True
+    runner.eta_lead = 1e-5
+    runner.results_path = str(tmp_path)
+    runner.out = {}
+    runner.deviceprop = SimpleNamespace(iter_transmission_eigs=iterator)
+    runner.negf_hamiltonian = SimpleNamespace(device_original_norbs=[2, 2],
+                                             device_id=[4, 6], device_atom_map=[0, 1])
+    runner._store_trans_eigs('k', 0)
+    assert all(ref() is None for ref in raw_refs + saved_refs)
+    assert len(runner.out['trans_eigchannel']['k']) == 3
+    assert all('coefficients' not in r for r in runner.out['trans_eigvals']['k'])
 
 
 def test_two_matched_chains_and_known_scatterer():
