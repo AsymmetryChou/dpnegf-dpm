@@ -139,6 +139,20 @@ class NEGFHamiltonianInit(object):
             if kk.startswith("lead"):
                 self.lead_ids[kk] = [int(x) for x in self.stru_options.get(kk)["id"].split("-")]
 
+        # Preserve the input atom/orbital order for exported eigenchannels.
+        d0, d1 = self.device_id
+        device_atoms = self.structase[d0:d1]
+        original_norbs = [int(model.idp.atom_norb[model.idp.chemical_symbol_to_type[a.symbol]])
+                          for a in device_atoms]
+        self.device_original_norbs = original_norbs
+        atom_order = (sort_lexico(device_atoms.positions) if block_tridiagonal
+                      else np.arange(len(device_atoms)))
+        offsets = np.concatenate(([0], np.cumsum(original_norbs)))
+        self.device_orbital_map = np.concatenate([
+            np.arange(offsets[i], offsets[i + 1]) for i in atom_order
+        ])
+        self.device_atom_map = np.asarray(atom_order)
+
         # sort the atoms in device region lexicographically
         if block_tridiagonal:
             self.structase = self._sort_device_lexico(self.structase, self.device_id)

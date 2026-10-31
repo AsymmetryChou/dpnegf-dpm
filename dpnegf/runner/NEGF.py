@@ -110,6 +110,7 @@ class NEGF(object):
                 btd_initialization: str="dense",
                 direct_btd_max_mib: Optional[float]=None,
                 device: Union[str, torch.device, None]=None,
+                trans_eigs_options: Optional[dict] = None,
                 **kwargs):
 
         self.init_device = _initialization_device(model, device)
@@ -437,6 +438,17 @@ class NEGF(object):
 
         # geting the output settings
         out_opts = dict(output_options or {})
+        self.out_trans_eigvals = out_opts.get("trans_eigvals", False)
+        self.out_trans_eigchannel = out_opts.get("trans_eigchannel", False)
+        self.need_trans_eigs = self.out_trans_eigvals or self.out_trans_eigchannel
+        self.trans_eigs_options = dict(trans_eigs_options or {})
+        if self.need_trans_eigs:
+            if self.trans_eigs_options.get("incoming", "left") not in ("left", "right"):
+                raise ValueError("trans_eigs_options.incoming must be left or right")
+            if (self.out_trans_eigchannel
+                    and self.trans_eigs_options.get("channel_indices") is not None
+                    and self.trans_eigs_options.get("n_channels") is not None):
+                raise ValueError("channel_indices and n_channels are mutually exclusive")
         self.out_tc = out_opts.get("tc", False) or self.out_conductance
         self.out_dos = out_opts.get("dos", False)
         self.out_density = out_opts.get("density", False)
@@ -448,6 +460,7 @@ class NEGF(object):
         assert not (self.out_lcurrent and self.block_tridiagonal)
         transmission_only = (
             not self.scf
+            and not self.need_trans_eigs
             and (self.out_tc or self.out_current_nscf or self.out_conductance)
             and not (
                 self.out_dos
@@ -538,6 +551,7 @@ class NEGF(object):
             cal_int_grid = True
 
         if (self.out_dos or self.out_tc or self.out_current_nscf or self.out_ldos
+            or self.need_trans_eigs
             or self.energy_grid_options.get("method") == "clenshaw_curtis"):
             # Energy gird is set relative to Fermi level
             if self.out_conductance or self.energy_grid_options.get("method") == "clenshaw_curtis":
@@ -841,6 +855,38 @@ class NEGF(object):
         )
         return b
 
+    def _store_trans_eigs(self, k):
+        """Keep ragged per-energy spectra (contact rank may change with energy)."""
+        options = dict(self.trans_eigs_options)
+        if not self.out_trans_eigchannel:
+            for key in ("n_channels", "channel_indices", "return_format"):
+                options.pop(key, None)
+        self.deviceprop._trans_eigs_eta_lead = self.eta_lead
+        results = self.deviceprop.cal_transmission_eigs(
+            channels=self.out_trans_eigchannel, **options)
+        def cpu(value):
+            if torch.is_tensor(value):
+                return value.detach().cpu()
+            if isinstance(value, dict):
+                return {key: cpu(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [cpu(item) for item in value]
+            return value
+        for result in results:
+            result = cpu(result)
+            if self.out_trans_eigvals:
+                values = {key: value for key, value in result.items()
+                          if key not in ("coefficients", "selected_indices", "tau_selected")}
+                self.out.setdefault("trans_eigvals", {}).setdefault(str(k), []).append(values)
+            if self.out_trans_eigchannel:
+                result["orbital_atoms"] = torch.repeat_interleave(
+                    torch.arange(len(self.negf_hamiltonian.device_original_norbs)),
+                    torch.tensor(self.negf_hamiltonian.device_original_norbs))
+                result["orbital_atoms_order"] = "original"
+                result["device_atom_start"] = self.negf_hamiltonian.device_id[0]
+                result["block_atom_map"] = torch.as_tensor(self.negf_hamiltonian.device_atom_map)
+                self.out.setdefault("trans_eigchannel", {}).setdefault(str(k), []).append(result)
+
     def negf_compute(self,scf_require=False,Vbias=None):
         
         assert scf_require is not None, "scf_require should be set to True or False"
@@ -957,8 +1003,11 @@ class NEGF(object):
                                 need_lesser=False,
                                 need_greater=False,
                                 need_gr_lc=False,
+                                need_trans_eigs=self.need_trans_eigs,
                                 )
 
+                            if self.need_trans_eigs:
+                                self._store_trans_eigs(k)
                             if self.out_dos:
                                 self.out.setdefault('DOS', {}).setdefault(str(k), []).append(self.compute_DOS(k))
                             if self.out_tc or self.out_current_nscf:
@@ -1018,8 +1067,11 @@ class NEGF(object):
                                     need_greater=False,
                                     need_gr_lc=False, # set to False for memory saving, can be set to True for lead spectral function G^r * \Gamma * G^a
                                     gf_cal_mode=self.gf_cal_mode,
+                                    need_trans_eigs=self.need_trans_eigs,
                                     )
 
+                                if self.need_trans_eigs:
+                                    self._store_trans_eigs(k)
                                 if self.out_dos:
                                     self.out.setdefault('DOS', {}).setdefault(str(k), []).append(self.compute_DOS(k).reshape(-1).cpu())
                                 if self.out_tc or self.out_current_nscf:
