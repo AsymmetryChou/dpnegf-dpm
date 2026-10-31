@@ -395,9 +395,10 @@ def test_two_matched_chains_and_known_scatterer():
     torch.testing.assert_close(coeff @ coeff.mH, G @ source_gamma @ G.mH)
 
 
-def test_cnt55_periodic_pi_model():
+@pytest.mark.parametrize('nblocks,energy', [(5, .2), (10, 0.)])
+def test_cnt55_periodic_pi_model(nblocks, energy):
     from examples.transmission_eigenchannels.run_cnt55 import cnt_context
-    c, atoms = cnt_context(nblocks=5)
+    c, atoms = cnt_context(nblocks=nblocks, energy=energy)
     result = transmission_eigenchannels(c, n_channels=2, return_format='original')
     torch.testing.assert_close(result['tau_all'][:2], torch.ones(2, dtype=torch.float64), atol=2e-6, rtol=0)
     assert abs(result['T_spectral'] - 2) < 4e-6
@@ -419,3 +420,29 @@ def test_no_dense_device_allocation_for_block_transport():
         transmission_eigenvalues(c)
         result = transmission_eigenchannels(c, n_channels=1)
     assert torch.cat(result['coefficients']).shape == (9, 1)
+
+
+@pytest.mark.parametrize('kwargs', [{}, {'orbital_map': None}])
+def test_standalone_context_missing_mapping_is_unknown(kwargs):
+    c = TransportContext(0., [torch.zeros(1, 1, dtype=DT)],
+                         [torch.ones(1, 1, dtype=DT)], [], [], [], [],
+                         torch.tensor([[-1j]], dtype=DT),
+                         torch.tensor([[-1j]], dtype=DT), **kwargs)
+    assert c.orbital_map is None
+    assert c.orbital_map_known is False
+    values = transmission_eigenvalues(c)
+    assert values['orbital_mapping_status'] == 'unknown'
+    assert values['orbital_map'] is values['inverse_orbital_map'] is None
+    channels = transmission_eigenchannels(c, return_format='blocks')
+    assert channels['basis_order'] == 'blocks'
+    with pytest.raises(ValueError, match='unknown'):
+        transmission_eigenchannels(c, return_format='original')
+    with pytest.raises(ValueError, match='explicit orbital_map'):
+        replace(c, orbital_map_known=True)
+    known = replace(c, orbital_map=[0], orbital_map_known=None)
+    assert known.orbital_map_known is True
+    original = transmission_eigenchannels(known, return_format='original')
+    assert original['orbital_mapping_status'] == 'known'
+    torch.testing.assert_close(original['coefficients'], channels['coefficients'][0])
+    with pytest.raises(ValueError, match='cannot specify'):
+        replace(known, orbital_map_known=False)
