@@ -197,6 +197,40 @@ def test_right_incidence_reuses_g_trans(monkeypatch, rectangular):
     assert actual['diagnostics']['solve_relative_residual'] < 1e-15
 
 
+@pytest.mark.parametrize('incoming', ['left', 'right'])
+@pytest.mark.parametrize('rectangular', [False, True])
+@pytest.mark.parametrize('cache_g_trans', [False, True])
+def test_channels_reuse_gr_left_without_factorization(monkeypatch, incoming, rectangular, cache_g_trans):
+    from dpnegf.negf.recursive_green_cal import recursive_gf
+    from dpnegf.negf.trans_eigs import _ContactSolver
+    c, _, _, SL, SR, G, li, ri = _model(rectangular=rectangular)
+    full = recursive_gf(c.energy, c.hl, c.hd, c.hu, c.sd, c.su, c.sl,
+                        SL[:3, :3], SR[7:, 7:], eta=c.eta_device, keep_gr_left=True)
+    cached = replace(c, gr_left=full[5], g_trans=full[0] if cache_g_trans else None)
+    expected = transmission_eigenchannels(c, incoming=incoming, n_channels=2)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Cached gr_left must avoid new matrix factorization or solves')
+    for name in ('lu_factor', 'lu_solve', 'solve', 'inv'):
+        monkeypatch.setattr(torch.linalg, name, forbidden)
+    actual = transmission_eigenchannels(cached, incoming=incoming, n_channels=2)
+    torch.testing.assert_close(actual['tau_all'], expected['tau_all'])
+    a, b = torch.cat(actual['coefficients']), torch.cat(expected['coefficients'])
+    torch.testing.assert_close(a @ a.mH, b @ b.mH)
+    assert actual['diagnostics']['solve_relative_residual'] < 1e-15
+
+    # Check arbitrary complex multiple RHS directly against the dense Green,
+    # including the right-injection boundary and non-contiguous contact indices.
+    solver = _ContactSolver(cached, incoming, retain=True)
+    assert solver.order == [0, 1, 2]
+    indices, out_indices = (li, ri) if incoming == 'left' else (ri, li)
+    rhs = torch.arange(len(indices) * 3, dtype=torch.float64).reshape(-1, 3).to(DT) * (1 + .3j)
+    dense = G[:, indices] @ rhs
+    torch.testing.assert_close(torch.cat(solver.solve(rhs, blocks=True)), dense)
+    torch.testing.assert_close(solver.solve(rhs), dense[out_indices])
+    assert solver.factors == [] and solver.transfers == []
+
+
 def test_device_eigenchannels_keep_green_solve_state(tmp_path):
     from .test_device_property_batched import _make_deviceprop
     c, *_ = _model()
