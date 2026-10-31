@@ -1,0 +1,79 @@
+{
+  "structure": "cnt55.xyz",
+  "dtype": "float64",
+  "device": "cpu",
+  "AtomicData_options": {
+    "r_max": 1.6
+  },
+  "task_options": {
+    "task": "negf",
+    "scf": false,
+    "block_tridiagonal": true,
+    "btd_initialization": "direct",
+    "ele_T": 300,
+    "unit": "eV",
+    "e_fermi": 0.0,
+    "eta_lead": 1e-05,
+    "eta_device": 1e-08,
+    "energy_grid": {
+      "method": "uniform",
+      "emin": -1.0,
+      "emax": 1.0,
+      "num_points": 101
+    },
+    "stru_options": {
+      "kmesh": [
+        1,
+        1,
+        1
+      ],
+      "pbc": [
+        false,
+        false,
+        false
+      ],
+      "nel_atom": {
+        "C": 1.0
+      },
+      "device": {
+        "id": "40-240",
+        "sort": true
+      },
+      "lead_L": {
+        "id": "0-40",
+        "voltage": 0.0
+      },
+      "lead_R": {
+        "id": "240-280",
+        "voltage": 0.0
+      }
+    },
+    "output_options": {
+      "tc": true,
+      "trans_eigvals": true,
+      "trans_eigchannel": true
+    },
+    "trans_eigs_options": {
+      "incoming": "left",
+      "n_channels": 2,
+      "return_format": "original"
+    },
+    "rgf_options": {
+      "device": "cpu",
+      "e_batch_size": 1
+    },
+    "self_energy_options": {
+      "numba_jit": false,
+      "parallel": {
+        "cpu_budget": 1,
+        "n_workers": 1,
+        "blas_threads": 1
+      }
+    },
+    "density_options": {
+      "method": "Ozaki",
+      "M_cut": 50,
+      "R": 1000000.0
+    }
+  }
+}
