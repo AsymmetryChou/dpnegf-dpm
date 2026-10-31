@@ -5,6 +5,7 @@ bases. No overlap is inserted into ``b_out.mH @ G_out_in @ b_in``.
 Channel indices are zero based; spectra contain the explicit thin-SVD values.
 """
 from dataclasses import dataclass
+from typing import Optional
 import math
 import warnings
 
@@ -72,8 +73,9 @@ class TransportContext:
     Optional contact indices are local to the first/last RGF block and follow
     the rows of the supplied self-energy. Cross-block contacts are rejected.
     ``orbital_map[i]`` is the original device orbital index of block-order row i.
-    Set ``orbital_map_known=False`` for caches without ordering metadata;
-    only coefficients in block order can then be returned.
+    An omitted ``orbital_map`` means unknown ordering; no identity is inferred.
+    Original-order coefficients require an explicit permutation (including
+    identity). ``orbital_map_known`` may explicitly assert known/unknown status.
     ``gr_left`` may reuse the left-connected Green blocks from full RGF.
     ``g_trans`` is the full first-to-last block G_LR (rows in the first
     block, columns in the last), reusable directly for right incidence.
@@ -97,7 +99,7 @@ class TransportContext:
     orbital_map: object = None
     gr_left: object = None
     g_trans: object = None
-    orbital_map_known: bool = True
+    orbital_map_known: Optional[bool] = None
 
     def __post_init__(self):
         if not self.hd or len(self.sd) != len(self.hd):
@@ -137,12 +139,16 @@ class TransportContext:
         self.left_indices = self._indices(self.left_se, self.hd[0], self.left_indices, False)
         self.right_indices = self._indices(self.right_se, self.hd[-1], self.right_indices, True)
         n = sum(x.shape[0] for x in self.hd)
+        if self.orbital_map_known is None:
+            self.orbital_map_known = self.orbital_map is not None
+        elif not isinstance(self.orbital_map_known, bool):
+            raise ValueError("orbital_map_known must be a boolean or None")
         if not self.orbital_map_known:
             if self.orbital_map is not None:
                 raise ValueError("Unknown orbital mapping cannot specify a permutation")
             return
         if self.orbital_map is None:
-            self.orbital_map = torch.arange(n, device=self.hd[0].device)
+            raise ValueError("Known orbital mapping requires an explicit orbital_map")
         self.orbital_map = _index_tensor(self.orbital_map, self.hd[0].device, "orbital_map")
         if self.orbital_map.shape != (n,) or not torch.equal(
                 self.orbital_map.sort().values, torch.arange(n, device=self.hd[0].device)):
@@ -251,7 +257,7 @@ def _compute(context, *, incoming="left", channels=False, channel_indices=None,
         raise ValueError("return_format must be 'blocks' or 'original'")
     c = context
     if channels and return_format == "original" and not c.orbital_map_known:
-        raise ValueError("H/S cache orbital mapping is unknown; regenerate the cache or use return_format=blocks")
+        raise ValueError("Orbital mapping is unknown; provide an explicit orbital_map, regenerate the cache, or use return_format=blocks")
     se_in, se_out = (c.left_se, c.right_se) if incoming == "left" else (c.right_se, c.left_se)
     gamma_in, gamma_out = 1j * (se_in - se_in.mH), 1j * (se_out - se_out.mH)
     b_in, diag_in = factor_broadening(gamma_in, **factor_options)
