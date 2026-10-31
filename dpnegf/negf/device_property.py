@@ -353,6 +353,7 @@ class DeviceProperty(object):
                 eta_lead=getattr(self, "_trans_eigs_eta_lead", None),
                 orbital_map=getattr(self.hamiltonian, "device_orbital_map", None),
                 gr_left=connected,
+                g_trans=self.greenfuncs["g_trans"][i] if batched else self.greenfuncs["g_trans"],
             )
             function = transmission_eigenchannels if channels else transmission_eigenvalues
             results.append(function(context, **options))

@@ -73,6 +73,8 @@ class TransportContext:
     the rows of the supplied self-energy. Cross-block contacts are rejected.
     ``orbital_map[i]`` is the original device orbital index of block-order row i.
     ``gr_left`` may reuse the left-connected Green blocks from full RGF.
+    ``g_trans`` is the full first-to-last block G_LR (rows in the first
+    block, columns in the last), reusable directly for right incidence.
     """
     energy: object
     hd: list
@@ -92,6 +94,7 @@ class TransportContext:
     right_indices: object = None
     orbital_map: object = None
     gr_left: object = None
+    g_trans: object = None
 
     def __post_init__(self):
         if not self.hd or len(self.sd) != len(self.hd):
@@ -118,6 +121,10 @@ class TransportContext:
                     g.shape != (n, n) for g, n in zip(self.gr_left, sizes)):
                 raise ValueError("Cached gr_left blocks have incompatible shapes")
             matrices = matrices + list(self.gr_left)
+        if self.g_trans is not None:
+            if self.g_trans.shape != (sizes[0], sizes[-1]):
+                raise ValueError("Cached g_trans must be the full boundary block G_LR")
+            matrices.append(self.g_trans)
         if any(x.device != reference.device or x.dtype != reference.dtype for x in matrices):
             raise ValueError("Transport matrices and cached Green blocks must share dtype and device")
         self.z = torch.as_tensor(self.energy, device=self.hd[0].device,
@@ -241,9 +248,13 @@ def _compute(context, *, incoming="left", channels=False, channel_indices=None,
     b_in, diag_in = factor_broadening(gamma_in, **factor_options)
     b_out, diag_out = factor_broadening(gamma_out, **factor_options)
     solver = _ContactSolver(c, incoming, retain=channels)
-    # Contact identity gives an independent raw Caroli check, including discarded
-    # Gamma directions. The forward pass retains only its current response.
-    green = solver.solve(torch.eye(len(gamma_in), device=se_in.device, dtype=se_in.dtype))
+    # Right incidence uses G_LR already computed by full RGF. Select the actual
+    # contact rows/columns, including reduced or non-contiguous contacts.
+    if incoming == "right" and c.g_trans is not None:
+        green = c.g_trans[c.left_indices[:, None], c.right_indices[None, :]]
+    else:
+        # Contact identity also retains discarded Gamma directions for raw Caroli.
+        green = solver.solve(torch.eye(len(gamma_in), device=se_in.device, dtype=se_in.dtype))
     k = b_out.mH @ green @ b_in
     if not torch.isfinite(green).all() or not torch.isfinite(k).all():
         raise ValueError("Non-finite contact Green function or transmission matrix")

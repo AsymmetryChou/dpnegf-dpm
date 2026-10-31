@@ -107,7 +107,8 @@ def test_dense_complex_nonorthogonal_reference(incoming, rectangular):
                                lowdin['coefficients'][0] @ lowdin['coefficients'][0].mH)
 
 
-def test_reuse_full_rgf_and_batch(tmp_path):
+@pytest.mark.parametrize('incoming', ['left', 'right'])
+def test_reuse_full_rgf_and_batch(tmp_path, incoming):
     from .test_device_property_batched import _make_deviceprop
     c, H, S, SL, SR, G, li, ri = _model()
     # Pad according to the existing boundary embedding, including zero rows.
@@ -123,9 +124,9 @@ def test_reuse_full_rgf_and_batch(tmp_path):
     dev.cal_green_function(energies, [0, 0, 0], eta_device=c.eta_device,
                            gf_cal_mode='transmission_only', need_trans_eigs=True)
     assert 'grd' in dev.greenfuncs  # Eigen outputs force full RGF.
-    results = dev.cal_transmission_eigs(channels=True, n_channels=1)
+    results = dev.cal_transmission_eigs(channels=True, n_channels=1, incoming=incoming)
     for energy, actual in zip(energies, results):
-        reference = transmission_eigenchannels(replace(c, energy=energy), n_channels=1)
+        reference = transmission_eigenchannels(replace(c, energy=energy), n_channels=1, incoming=incoming)
         torch.testing.assert_close(actual['tau_all'][:2], reference['tau_all'])
         # A full zero-padded contact has the same physical coefficient projectors.
         a, b = torch.cat(actual['coefficients']), torch.cat(reference['coefficients'])
@@ -166,9 +167,34 @@ def test_context_rejects_broadcast_blocks_and_invalid_cache():
     for changes in ({'sd': [torch.ones(1, dtype=DT)] + c.sd[1:]},
                     {'hu': [torch.ones(1, 4, dtype=DT), c.hu[1]]},
                     {'gr_left': [torch.ones(1, dtype=DT)] * 3},
-                    {'gr_left': [torch.full_like(h, float('nan')) for h in c.hd]}):
+                    {'gr_left': [torch.full_like(h, float('nan')) for h in c.hd]},
+                    {'g_trans': torch.ones(2, 3, dtype=DT)},
+                    {'g_trans': torch.full((3, 2), float('nan'), dtype=DT)}):
         with pytest.raises(ValueError):
             replace(c, **changes)
+
+
+@pytest.mark.parametrize('rectangular', [False, True])
+def test_right_incidence_reuses_g_trans(monkeypatch, rectangular):
+    from dpnegf.negf.trans_eigs import _ContactSolver
+    c, _, _, _, _, G, _, _ = _model(rectangular=rectangular)
+    cached = replace(c, g_trans=G[:3, 7:])
+    expected = transmission_eigenchannels(c, incoming='right', n_channels=1)
+    original_solve = _ContactSolver.solve
+    calls = []
+    def solve(self, source, *, blocks=False):
+        calls.append((source.shape[1], blocks))
+        return original_solve(self, source, blocks=blocks)
+    monkeypatch.setattr(_ContactSolver, 'solve', solve)
+    values = transmission_eigenvalues(cached, incoming='right')
+    assert calls == []  # No new block solve is needed for the spectrum.
+    actual = transmission_eigenchannels(cached, incoming='right', n_channels=1)
+    assert calls == [(1, True)]  # Only the selected channel source is solved.
+    torch.testing.assert_close(values['tau_all'], expected['tau_all'])
+    torch.testing.assert_close(actual['T_caroli_raw'], expected['T_caroli_raw'])
+    a, b = torch.cat(actual['coefficients']), torch.cat(expected['coefficients'])
+    torch.testing.assert_close(a @ a.mH, b @ b.mH)
+    assert actual['diagnostics']['solve_relative_residual'] < 1e-15
 
 
 def test_device_eigenchannels_keep_green_solve_state(tmp_path):
