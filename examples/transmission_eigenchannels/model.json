@@ -1,0 +1,53 @@
+{
+  "version": 2,
+  "unit": "eV",
+  "common_options": {
+    "basis": {
+      "C": [
+        "2s"
+      ]
+    },
+    "dtype": "float64",
+    "device": "cpu",
+    "overlap": true
+  },
+  "model_options": {
+    "nnsk": {
+      "onsite": {
+        "method": "uniform_noref"
+      },
+      "hopping": {
+        "method": "poly2exp",
+        "rs": 1.65,
+        "w": 0.001
+      },
+      "soc": {},
+      "freeze": false,
+      "push": false,
+      "std": 0.01
+    }
+  },
+  "model_params": {
+    "onsite": {
+      "C-2s-0": [
+        0.0
+      ]
+    },
+    "hopping": {
+      "C-C-2s-2s-0": [
+        -2.7,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "overlap": {
+      "C-C-2s-2s-0": [
+        0.1,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  }
+}

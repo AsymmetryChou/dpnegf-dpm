@@ -909,6 +909,8 @@ def initialize_direct(owner, kpoints, structure_leads):
         cache.create_dataset("kpoints", data=kpoints)
         cache.create_dataset("subblocks", data=blocks)
         cache.create_dataset("block_tridiagonal", data=True)
+        from dpnegf.utils.orbital_mapping import write_orbital_mapping
+        write_orbital_mapping(cache, owner._input_orbital_mapping)
 
         for name in ("hd", "hu", "hl", "sd", "su", "sl"):
             cache.create_group(name)
